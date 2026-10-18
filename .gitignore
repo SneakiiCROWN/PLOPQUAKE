@@ -1,0 +1,9 @@
+.godot/
+*.apk
+*.aab
+*.keystore
+*.jks
+*.p12
+.env
+*.log
+export_presets.cfg
