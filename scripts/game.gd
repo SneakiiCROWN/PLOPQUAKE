@@ -13,7 +13,7 @@ const SAVE_PATH := "user://plopquake_native_v1.json"
 const SAVE_BACKUP := "user://plopquake_native_backup.json"
 const SAVE_RECOVERY := "user://plopquake_native_recovery.json"
 const SAVE_IMPORT_BACKUP := "user://plopquake_native_before_manual_restore.json"
-const MAX_PARTICLES := 120
+const MAX_PARTICLES := 150
 const ACHIEVEMENT_TITLES := ["100 MERGES", "300 DROPS", "20 BOOMS", "FIND LEVEL 8"]
 const ACHIEVEMENT_GOALS := [100, 300, 20, 8]
 const FACTORY_RANK_NAMES := ["NEW HIRE", "SPARK STARTER", "FUSION FAN", "BOOM TECH", "CHAOS ENGINEER", "MASTER MIXER", "FACTORY LEGEND"]
@@ -34,10 +34,14 @@ const NAMES := ["PIP", "BOOP", "MIMO", "GOB", "CHONK", "WOMP", "HONK", "HUGE", "
 const RADII := [23.0, 29.0, 37.0, 47.0, 60.0, 76.0, 96.0, 120.0, 146.0, 166.0]
 const CANDY_DATE_START := 10
 const CANDY_DATE_END := 10
-const HOLD_DROP_COOLDOWN := 0.18
-const MAX_HOLD_DROPS := 8
-const MERGE_SQUASH_DURATION := 0.12
-const MERGE_SQUASH_SCALE := 0.7
+const HOLD_DROP_COOLDOWN := 0.15
+const MAX_HOLD_DROPS := 10
+const MERGE_SQUASH_DURATION := 0.18
+const MERGE_SQUASH_SCALE := 0.65
+const DROP_ANTICIPATION_TIME := 0.08
+const COMBO_WINDOW := 1.2
+const BOOM_CHARGE_PER_TIER := 2.5
+const BASE_BOOM_CHARGE := 12.0
 
 var palette: Array[Color] = [
     Color("46dd98"), Color("68b8ff"), Color("ffd06d"), Color("f4779c"),
@@ -92,9 +96,10 @@ var board_owned: Array = ["Factory"]
 var board_equipped := "Factory"
 var achievements_claimed: Array = []
 var low_power := false
-var music_on := false
+var music_on := true
 var seasonal_art := true
-var sound_volume := 0.75
+var sound_volume := 0.8
+var music_volume := 0.6
 var haptics := true
 var popup_scale := 0.0
 var boom_pulse := 0.0
@@ -107,6 +112,7 @@ var menu_texture: Texture2D
 var board_textures: Dictionary = {}
 var saved_event_month := -1
 var soundtrack: AudioStreamPlayer
+var music_player: AudioStreamPlayer
 var sfx: Dictionary = {}
 var draw_scale := 1.0
 var draw_origin := Vector2.ZERO
@@ -154,6 +160,20 @@ var merge_effects: Array[Dictionary] = []
 var kenney_particles: Array[Texture2D] = []
 var kenney_ui_sounds: Dictionary = {}
 var particle_textures: Array[Texture2D] = []
+# v1.1 — Quality overhaul: improved physics, animation, audio, UI
+var drop_anticipation_timer := 0.0
+var drop_anticipating := false
+var pending_drop_x := 0.0
+var last_merge_time := 0.0
+var merge_chain_count := 0
+var screen_shake_offset := Vector2.ZERO
+var ui_scale := 1.0
+var background_parallax := 0.0
+var combo_popup_scale := 0.0
+var combo_popup_text := ""
+var perfect_drop_window := false
+var perfect_drop_timer := 0.0
+var blob_wobble_phase := 0.0
 
 func _ready() -> void:
     font = ThemeDB.fallback_font
@@ -276,29 +296,36 @@ func _backup_previous_native_save() -> void:
     backup_file.close()
 
 func _make_audio() -> void:
+    # Main soundtrack
     soundtrack = AudioStreamPlayer.new()
     soundtrack.stream = load("res://audio/factory_loop.wav")
-    soundtrack.volume_db = -25.0
+    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
     if soundtrack.stream is AudioStreamWAV:
         soundtrack.stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
     add_child(soundtrack)
+    
+    # Dedicated music player for jingles and special tracks
+    music_player = AudioStreamPlayer.new()
+    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
+    add_child(music_player)
+    
     for name in ["plop", "boom", "reward"]:
         var player := AudioStreamPlayer.new()
         player.stream = load("res://audio/%s.wav" % name)
-        player.volume_db = -12.0 if name == "plop" else -8.0
+        player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - (10.0 if name in ["plop", "merge"] else 8.0)
         add_child(player)
         sfx[name] = player
     for i in range(3):
         var voice := AudioStreamPlayer.new()
         voice.stream = load("res://audio/merge.wav")
-        voice.volume_db = -10.0
+        voice.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 10.0
         add_child(voice)
         sfx["merge_%d" % i] = voice
     # Nathan Gibson's CC BY 4.0 UI cues. Attribution in Third-party credits.
     for cue in ["ui_tap", "ui_open", "ui_back", "ui_error", "ui_switch", "ui_confirm"]:
         var click_player := AudioStreamPlayer.new()
         click_player.stream = load("res://audio/ui/%s.ogg" % cue)
-        click_player.volume_db = -12.0
+        click_player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 13.0
         add_child(click_player)
         sfx[cue] = click_player
     
@@ -313,7 +340,7 @@ func _make_audio() -> void:
         if ResourceLoader.exists("res://audio/kenney_ui/%s.ogg" % name):
             var player := AudioStreamPlayer.new()
             player.stream = load("res://audio/kenney_ui/%s.ogg" % name)
-            player.volume_db = -10.0
+            player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 10.0
             add_child(player)
             sfx[name] = player
     
@@ -328,7 +355,7 @@ func _make_audio() -> void:
         if ResourceLoader.exists("res://audio/kenney_music/%s.ogg" % name):
             var player := AudioStreamPlayer.new()
             player.stream = load("res://audio/kenney_music/%s.ogg" % name)
-            player.volume_db = -6.0
+            player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
             add_child(player)
             sfx[name] = player
 
@@ -389,11 +416,11 @@ func _play_impact(tier: int = 0) -> void:
     var chosen: String = available[rng.randi_range(0, available.size() - 1)]
     var player: AudioStreamPlayer = sfx[chosen]
     player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 10.0
-    player.pitch_scale = rng.randf_range(0.9, 1.1)
+    player.pitch_scale = rng.randf_range(0.85, 1.15)
     player.play()
 
 func _play_jingle(tier: int = 0) -> void:
-    if not sound_on:
+    if not music_on or not sound_on:
         return
     var jingles: Array = []
     if tier >= 8:
@@ -411,9 +438,9 @@ func _play_jingle(tier: int = 0) -> void:
     if available.is_empty():
         return
     var chosen: String = available[rng.randi_range(0, available.size() - 1)]
-    var player: AudioStreamPlayer = sfx[chosen]
-    player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 6.0
-    player.play()
+    music_player.stream = sfx[chosen]
+    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
+    music_player.play()
 
 func _today() -> String:
     var d := Time.get_date_dict_from_system()
@@ -1042,6 +1069,10 @@ func _physics_process(delta: float) -> void:
         if save_timer >= 0.4:
             save_timer = 0.0
             _flush_save()
+    # Update soundtrack volume based on music_volume setting
+    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
+    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
+    
     var play_music := music_on and screen in ["home", "game"] and not gameover
     if play_music and not soundtrack.playing:
         soundtrack.play()
@@ -1704,10 +1735,11 @@ func _draw_settings() -> void:
     if settings_tab == 0:
         _label("GAME AUDIO",360,494,35,Color("d9ff9e"))
         _button(Rect2(96,537,528,82),"sound","SOUND EFFECTS: %s" % ("ON" if sound_on else "OFF"),Color("496c80"))
-        _button(Rect2(96,647,528,80),"vol","SFX VOLUME: %d%%" % int(sound_volume * 100),Color("38517a"),Color.WHITE,23)
-        _button(Rect2(96,746,528,74),"haptic","PHONE VIBRATION: %s" % ("ON" if haptics else "OFF"),Color("38517a"),Color.WHITE,23)
-        _button(Rect2(96,826,528,74),"music","BACKGROUND MUSIC: %s" % ("ON" if music_on else "OFF"),Color("38517a"),Color.WHITE,23)
-        _label("UI SOUND: NATHAN GIBSON • CC BY 4.0",360,919,15,Color("c4d8f0"),544)
+        _button(Rect2(96,635,528,80),"vol","SFX VOLUME: %d%%" % int(sound_volume * 100),Color("38517a"),Color.WHITE,23)
+        _button(Rect2(96,723,528,74),"music_vol","MUSIC VOLUME: %d%%" % int(music_volume * 100),Color("38517a"),Color.WHITE,23)
+        _button(Rect2(96,805,528,74),"haptic","PHONE VIBRATION: %s" % ("ON" if haptics else "OFF"),Color("38517a"),Color.WHITE,23)
+        _button(Rect2(96,875,528,74),"music","BACKGROUND MUSIC: %s" % ("ON" if music_on else "OFF"),Color("38517a"),Color.WHITE,23)
+        _label("UI SOUND: NATHAN GIBSON • CC BY 4.0",360,969,15,Color("c4d8f0"),544)
     elif settings_tab == 1:
         _label("VISUAL COMFORT",360,489,34,Color("d9ff9e"))
         _button(Rect2(96,520,528,77),"motion","REDUCED MOTION: %s" % ("ON" if low_motion else "OFF"),Color("38517a"),Color.WHITE,23)
@@ -2050,6 +2082,19 @@ func _activate(id: String) -> void:
         haptics = not haptics
     elif id == "music":
         music_on = not music_on
+        if not music_on:
+            soundtrack.stream_paused = true
+            music_player.stop()
+        elif screen in ["home", "game"] and not gameover:
+            soundtrack.play()
+    elif id == "music_vol":
+        if music_volume > .95:
+            music_volume = .25
+        else:
+            music_volume = minf(1.0, music_volume + .25)
+        soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
+        music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
+        _play_sfx("plop")
     elif id == "vol":
         if sound_volume > .95:
             sound_volume = .25
