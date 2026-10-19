@@ -207,7 +207,7 @@ func _load_kenney_particles() -> void:
     # Load particle textures from Kenney Particle Pack (PNG/Transparent)
     var particle_names := [
         "circle_01", "circle_02", "circle_03", "circle_04", "circle_05",
-        "flare_01", "flare_02", "flare_03",
+        "flare_01",
         "spark_01", "spark_02", "spark_03", "spark_04", "spark_05", "spark_06", "spark_07",
         "star_01", "star_02", "star_03", "star_04", "star_05", "star_06", "star_07", "star_08", "star_09",
         "magic_01", "magic_02", "magic_03", "magic_04", "magic_05",
@@ -219,9 +219,10 @@ func _load_kenney_particles() -> void:
         "trace_01", "trace_02", "trace_03", "trace_04", "trace_05", "trace_06", "trace_07"
     ]
     for name in particle_names:
-        var tex := load("res://art/kenney_particles/%s.png" % name) as Texture2D
-        if tex != null:
-            particle_textures.append(tex)
+        if ResourceLoader.exists("res://art/kenney_particles/%s.png" % name):
+            var tex := load("res://art/kenney_particles/%s.png" % name) as Texture2D
+            if tex != null:
+                particle_textures.append(tex)
     # Fallback: create simple circle particles if Kenney assets not available
     if particle_textures.is_empty():
         var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
@@ -327,14 +328,14 @@ func _play_kenney_ui(category: String) -> void:
             matching.append(k)
     if matching.is_empty():
         return
-    var chosen := matching[rng.randi_range(0, matching.size() - 1)]
+    var chosen: String = matching[rng.randi_range(0, matching.size() - 1)]
     var player := AudioStreamPlayer.new()
     player.stream = kenney_ui_sounds[chosen]
     player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 13.0
     add_child(player)
     player.play()
     # Clean up after playing
-    callable(player.queue_free).call_deferred()
+    player.queue_free.call_deferred()
 
 func _today() -> String:
     var d := Time.get_date_dict_from_system()
@@ -1480,9 +1481,9 @@ func _draw_game() -> void:
     if not low_motion:
         for eff in merge_effects:
             var progress := 1.0 - float(eff["timer"]) / MERGE_SQUASH_DURATION
-            var scale_factor := lerp(1.0, eff["scale"], sin(progress * PI))
-            var radius := RADII[int(eff["tier"])] * scale_factor
-            var alpha := 1.0 - progress
+            var scale_factor: float = lerp(1.0, float(eff["scale"]), sin(progress * PI))
+            var radius: float = RADII[int(eff["tier"])] * scale_factor
+            var alpha: float = 1.0 - progress
             var c: Color = eff["color"]
             draw_circle(eff["pos"], radius, Color(c.r, c.g, c.b, alpha * 0.6))
             # Add a bright flash at peak
