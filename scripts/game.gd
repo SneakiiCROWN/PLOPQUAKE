@@ -1367,7 +1367,10 @@ func _button(r: Rect2, id: String, title: String, accent: Color = Color("283b62"
             btn_tex_name = "button_round_flat"
         var kenney_btn := load("res://art/kenney_ui/%s.png" % btn_tex_name) as Texture2D
         if kenney_btn != null:
-            _draw_nine_patch(kenney_btn, r.grow(-2.0), Color(1,1,1,0.7 if depressed else 0.9))
+            var tint_color := Color(1, 1, 1, 0.85 if depressed else 1.0)
+            if accent == Color("f5698a"):  # BOOM button
+                tint_color = Color(1, 0.9, 0.7, tint_color.a)
+            _draw_nine_patch(kenney_btn, r.grow(-2.0), tint_color)
     if depressed:
         _filled_round(r.grow(-6.0), Color(0.98,0.99,1.0,0.11), 13.0)
     draw_line(r.position + Vector2(22, 6), r.position + Vector2(r.size.x - 22, 6), Color(1,1,1,0.12 if depressed else 0.29), 2.0)
@@ -1410,8 +1413,18 @@ func _draw_portrait(pos: Vector2, tier: int, radius: float, fade: float, look: S
         art = production_creatures[safe_tier]
     if art == null:
         return
-    var breath := 1.0 if low_motion else 1.0 + sin(elapsed * 1.55 + float(tier) + pos.x * 0.012) * 0.010
+    
+    # Enhanced breathing with tier-based variation
+    var breath_rate: float = 1.55 + float(tier) * 0.05
+    var breath_amp: float = 0.008 + float(tier) * 0.0015
+    var breath := 1.0 + (0.0 if low_motion else sin(elapsed * breath_rate + float(tier) + pos.x * 0.012) * breath_amp)
     var size := radius * 2.20 * breath
+    
+    # Subtle side-to-side sway for personality
+    var sway: float = 0.0
+    if not low_motion:
+        sway = sin(elapsed * 0.7 + float(tier) * 1.3) * radius * 0.02
+    
     var tint := Color(1.0, 1.0, 1.0, fade)
     match look:
         "Night Glow": tint = Color(0.83, 0.90, 1.17, fade)
@@ -1429,33 +1442,40 @@ func _draw_portrait(pos: Vector2, tier: int, radius: float, fade: float, look: S
         "Frostbite": tint = Color(0.72, 0.98, 1.19, fade)
         "Rose Gold": tint = Color(1.18, 0.82, 0.86, fade)
         "Void Royal": tint = Color(0.61, 0.61, 0.98, fade)
+    
+    # Ground shadow with fade based on height
     if not low_power:
         var cc: Color = palette[clampi(tier, 0, 9)]
-        draw_circle(pos + Vector2(0, radius * 0.14 + 10.0), radius * 1.02, Color(0.01, 0.02, 0.09, .18 * fade))
+        var shadow_alpha: float = 0.18 * fade * (1.0 - minf(1.0, (pos.y - (FLOOR - radius)) / 200.0))
+        draw_circle(pos + Vector2(sway, radius * 0.14 + 10.0), radius * 1.02, Color(0.01, 0.02, 0.09, shadow_alpha))
         if tier >= 5:
-            draw_circle(pos, radius * 1.15, Color(cc.r, cc.g, cc.b, .035 * fade))
+            draw_circle(pos + Vector2(sway, 0), radius * 1.15, Color(cc.r, cc.g, cc.b, .035 * fade))
+    
     # All ten sprites have centered alpha bounds. Their visible perimeter now follows
     # the physics collision radius rather than extending ~40% beyond it.
-    var sprite_origin := pos - Vector2.ONE * (size * 0.5)
+    var sprite_origin := pos + Vector2(sway, 0) - Vector2.ONE * (size * 0.5)
     draw_texture_rect(art, Rect2(sprite_origin, Vector2.ONE * size), false, tint)
-    _draw_accessory(pos, radius, fade, look)
+    _draw_accessory(pos + Vector2(sway, 0), radius, fade, look)
+    
     if high_contrast:
-        draw_arc(pos, radius * 0.99, 0.0, TAU, 40, Color(1.0, 1.0, 1.0, 0.9 * fade), maxf(2.0, radius * 0.042), true)
+        draw_arc(pos + Vector2(sway, 0), radius * 0.99, 0.0, TAU, 40, Color(1.0, 1.0, 1.0, 0.9 * fade), maxf(2.0, radius * 0.042), true)
     if low_power:
         return
+    
+    # Enhanced visual effects per look
     if look in ["Night Glow", "Aurora Flux", "Inkstorm"]:
         var halo := Color("74f5ff") if look != "Inkstorm" else Color("b5a3ff")
         var a := 0.46 + (0.0 if low_motion else 0.12 * sin(elapsed * 2.6))
-        draw_arc(pos, radius * 1.035, 0.15, 2.8, 32, Color(halo.r, halo.g, halo.b, a * fade), maxf(2.0, radius * 0.039), true)
+        draw_arc(pos + Vector2(sway, 0), radius * 1.035, 0.15, 2.8, 32, Color(halo.r, halo.g, halo.b, a * fade), maxf(2.0, radius * 0.039), true)
     elif look == "Comet Trail":
-        draw_arc(pos, radius * 1.04, -.6, 2.2, 25, Color(0.9, 1, 1, 0.64 * fade), maxf(2.0, radius * .045), true)
+        draw_arc(pos + Vector2(sway, 0), radius * 1.04, -.6, 2.2, 25, Color(0.9, 1, 1, 0.64 * fade), maxf(2.0, radius * .045), true)
     elif look == "Prism Pop":
-        draw_arc(pos, radius * 1.04, -2.0, 0.4, 22, Color(1.0, .60, .92, .64 * fade), maxf(2.0, radius * .05), true)
-        draw_arc(pos, radius * 1.04, 0.5, 2.9, 22, Color(.5, 1, .88, .64 * fade), maxf(2.0, radius * .05), true)
+        draw_arc(pos + Vector2(sway, 0), radius * 1.04, -2.0, 0.4, 22, Color(1.0, .60, .92, .64 * fade), maxf(2.0, radius * .05), true)
+        draw_arc(pos + Vector2(sway, 0), radius * 1.04, 0.5, 2.9, 22, Color(.5, 1, .88, .64 * fade), maxf(2.0, radius * .05), true)
     elif look == "Crown Spark":
-        draw_circle(pos + Vector2(radius * 0.68, -radius * .75), maxf(2.0, radius*.065), Color(1, .98, .62, fade))
+        draw_circle(pos + Vector2(sway + radius * 0.68, -radius * .75), maxf(2.0, radius*.065), Color(1, .98, .62, fade))
     elif look == "Pumpkin Pop":
-        draw_circle(pos + Vector2(0, -radius*.90), maxf(2.0,radius*.065), Color(.68, 1, .39, fade))
+        draw_circle(pos + Vector2(sway, -radius*.90), maxf(2.0,radius*.065), Color(.68, 1, .39, fade))
     elif look in ["Solar Flare", "Nebula", "Voltage", "Frostbite", "Rose Gold", "Void Royal"]:
         var rim := Color("ffd181")
         match look:
@@ -1465,9 +1485,9 @@ func _draw_portrait(pos: Vector2, tier: int, radius: float, fade: float, look: S
             "Rose Gold": rim = Color("ffb3dc")
             "Void Royal": rim = Color("a387ff")
         var pulse := 0.64 if low_motion else 0.53 + 0.17 * sin(elapsed * 2.4)
-        draw_arc(pos, radius * 1.06, 0.0, TAU, 36, Color(rim.r,rim.g,rim.b,pulse * fade), maxf(2.0,radius*.043), true)
+        draw_arc(pos + Vector2(sway, 0), radius * 1.06, 0.0, TAU, 36, Color(rim.r,rim.g,rim.b,pulse * fade), maxf(2.0,radius*.043), true)
         if look == "Void Royal":
-            draw_arc(pos, radius * 1.13, 0.14, 3.05, 25, Color(.70,.46,1.0,.52*fade), maxf(2.0,radius*.03), true)
+            draw_arc(pos + Vector2(sway, 0), radius * 1.13, 0.14, 3.05, 25, Color(.70,.46,1.0,.52*fade), maxf(2.0,radius*.03), true)
 
 func _draw_accessory(pos: Vector2, radius: float, fade: float, look: String) -> void:
     # A purchased look changes actual gameplay sprites, not merely its shop preview.
@@ -1510,58 +1530,68 @@ func _blob(pos: Vector2, tier: int, radius: float, fade: float = 1.0, preview_sk
         c = c.lerp(Color("a5deff"), 0.40)
     elif look == "Inkstorm":
         c = c.lerp(Color("202c55"), 0.70)
+    
+    # Enhanced breathing with tier variation
     var t := elapsed * (0.8 + float(tier) * 0.06) + pos.x * 0.013
-    var breath := 1.0 + (0.0 if low_motion else sin(t) * 0.012)
+    var breath_amp: float = 0.012 + float(tier) * 0.002
+    var breath := 1.0 + (0.0 if low_motion else sin(t) * breath_amp)
     radius *= breath
+    
+    # Subtle sway
+    var sway: float = 0.0
+    if not low_motion:
+        sway = sin(elapsed * 0.7 + float(tier) * 1.3) * radius * 0.02
+    var draw_pos := pos + Vector2(sway, 0)
+    
     # Soft shadow and rimlight, drawn cheaply at any device resolution.
-    draw_circle(pos + Vector2(2.0, radius * 0.12 + 7.0), radius * 1.06, Color(0,0.01,0.07,0.24 * fade))
+    draw_circle(draw_pos + Vector2(2.0, radius * 0.12 + 7.0), radius * 1.06, Color(0,0.01,0.07,0.24 * fade))
     if not low_power:
-        draw_circle(pos, radius * 1.09, Color(c.r,c.g,c.b,0.075 * fade))
-    draw_circle(pos, radius, Color(c.r * .52,c.g * .62,c.b * .72,fade))
-    draw_circle(pos + Vector2(-radius * .025,-radius * .055), radius * .91, Color(c.r,c.g,c.b,fade))
+        draw_circle(draw_pos, radius * 1.09, Color(c.r,c.g,c.b,0.075 * fade))
+    draw_circle(draw_pos, radius, Color(c.r * .52,c.g * .62,c.b * .72,fade))
+    draw_circle(draw_pos + Vector2(-radius * .025,-radius * .055), radius * .91, Color(c.r,c.g,c.b,fade))
     if not low_power:
-        draw_circle(pos + Vector2(-radius * .18,-radius * .24), radius * .67, Color(1,1,1,0.085 * fade))
-    draw_arc(pos, radius - 1.3, 0.0, TAU, 28, Color(1,1,1,(1.0 if high_contrast else .83) * fade), maxf(1.7,radius * (0.045 if high_contrast else 0.033)), true)
-    draw_circle(pos + Vector2(-radius * .35,-radius * .44), radius * .18, Color(1,1,1,0.36 * fade))
-    draw_circle(pos + Vector2(-radius * .45,-radius * .51), radius * .045, Color(1,1,1,0.62 * fade))
+        draw_circle(draw_pos + Vector2(-radius * .18,-radius * .24), radius * .67, Color(1,1,1,0.085 * fade))
+    draw_arc(draw_pos, radius - 1.3, 0.0, TAU, 28, Color(1,1,1,(1.0 if high_contrast else .83) * fade), maxf(1.7,radius * (0.045 if high_contrast else 0.033)), true)
+    draw_circle(draw_pos + Vector2(-radius * .35,-radius * .44), radius * .18, Color(1,1,1,0.36 * fade))
+    draw_circle(draw_pos + Vector2(-radius * .45,-radius * .51), radius * .045, Color(1,1,1,0.62 * fade))
     for side in [-1.0,1.0]:
         if tier in [3,4,5,6]:
             var ex := Vector2(side * radius * .60,-radius * .76)
-            draw_colored_polygon(PackedVector2Array([pos + ex + Vector2(-radius*.20,0),pos + ex + Vector2(0,-radius*.30),pos + ex + Vector2(radius*.19,0)]), c.darkened(0.08))
+            draw_colored_polygon(PackedVector2Array([draw_pos + ex + Vector2(-radius*.20,0),draw_pos + ex + Vector2(0,-radius*.30),draw_pos + ex + Vector2(radius*.19,0)]), c.darkened(0.08))
         if tier == 7:
-            draw_circle(pos + Vector2(side * radius * .50,-radius * .84),radius * .19,Color("ffd9ef"))
+            draw_circle(draw_pos + Vector2(side * radius * .50,-radius * .84),radius * .19,Color("ffd9ef"))
     if tier >= 8:
         var gold := Color("fff5aa")
-        draw_line(pos + Vector2(-radius * .33,-radius *.95),pos + Vector2(-radius *.20,-radius *1.18),gold, maxf(2.0,radius*.035))
-        draw_line(pos + Vector2(-radius *.20,-radius *1.18),pos + Vector2(0,-radius*1.03),gold,maxf(2.0,radius*.035))
-        draw_line(pos + Vector2(0,-radius*1.03),pos + Vector2(radius*.20,-radius*1.18),gold,maxf(2.0,radius*.035))
-        draw_line(pos + Vector2(radius*.20,-radius*1.18),pos + Vector2(radius*.33,-radius*.95),gold,maxf(2.0,radius*.035))
+        draw_line(draw_pos + Vector2(-radius * .33,-radius *.95),draw_pos + Vector2(-radius *.20,-radius *1.18),gold, maxf(2.0,radius*.035))
+        draw_line(draw_pos + Vector2(-radius *.20,-radius *1.18),draw_pos + Vector2(0,-radius*1.03),gold,maxf(2.0,radius*.035))
+        draw_line(draw_pos + Vector2(0,-radius*1.03),draw_pos + Vector2(radius*.20,-radius*1.18),gold,maxf(2.0,radius*.035))
+        draw_line(draw_pos + Vector2(radius*.20,-radius*1.18),draw_pos + Vector2(radius*.33,-radius*.95),gold,maxf(2.0,radius*.035))
     var eye_radius := maxf(2.2,radius * .091)
     var blink := not low_motion and sin(elapsed * 1.9 + float(tier)*1.49) > 0.991
     for side in [-1.0,1.0]:
-        var eye := pos + Vector2(side * radius * .235, -radius * .045)
+        var eye := draw_pos + Vector2(side * radius * .235, -radius * .045)
         if blink:
             draw_line(eye - Vector2(eye_radius,0),eye + Vector2(eye_radius,0),Color("263047"),maxf(2.0,eye_radius * .6))
         else:
             draw_circle(eye,eye_radius,Color("21304d"))
             draw_circle(eye + Vector2(-eye_radius*.22,-eye_radius*.31),eye_radius*.32,Color.WHITE)
-    draw_arc(pos + Vector2(0,radius*.155),radius*.23,.23,PI-.23,14,Color("483153"),maxf(1.7,radius*.057),true)
+    draw_arc(draw_pos + Vector2(0,radius*.155),radius*.23,.23,PI-.23,14,Color("483153"),maxf(1.7,radius*.057),true)
     if tier >= 3:
         for side in [-1.0,1.0]:
-            draw_circle(pos + Vector2(side * radius * .48,radius*.22),radius*.105,Color(1,.42,.56,.32*fade))
+            draw_circle(draw_pos + Vector2(side * radius * .48,radius*.22),radius*.105,Color(1,.42,.56,.32*fade))
     if look == "Comet Trail" and not low_power:
-        draw_arc(pos,radius*1.06,0.24,2.4,17,Color("b4f8ff"),maxf(2.0,radius*.037))
+        draw_arc(draw_pos,radius*1.06,0.24,2.4,17,Color("b4f8ff"),maxf(2.0,radius*.037))
     if look == "Crown Spark" and not low_power:
-        draw_circle(pos + Vector2(radius*.40,-radius*.68),radius*.06,Color("fff3a0"))
+        draw_circle(draw_pos + Vector2(radius*.40,-radius*.68),radius*.06,Color("fff3a0"))
     if look == "Aurora Flux" and not low_power:
-        draw_arc(pos, radius * 1.13, -1.2, 1.9, 24, Color("a3ffea", 0.6 * fade), maxf(2.0, radius * .045))
+        draw_arc(draw_pos, radius * 1.13, -1.2, 1.9, 24, Color("a3ffea", 0.6 * fade), maxf(2.0, radius * .045))
     if look == "Pumpkin Pop":
-        draw_circle(pos + Vector2(0, -radius * .93), radius * .10, Color("a7fc78", fade))
+        draw_circle(draw_pos + Vector2(0, -radius * .93), radius * .10, Color("a7fc78", fade))
     if look == "Prism Pop" and not low_power:
-        draw_arc(pos, radius * 1.10, -2.0, 0.4, 20, Color("ffc7ef", .73 * fade), maxf(2.0, radius * .054), true)
-        draw_arc(pos, radius * 1.10, 0.5, 2.9, 20, Color("9cfff5", .73 * fade), maxf(2.0, radius * .054), true)
+        draw_arc(draw_pos, radius * 1.10, -2.0, 0.4, 20, Color("ffc7ef", .73 * fade), maxf(2.0, radius * .054), true)
+        draw_arc(draw_pos, radius * 1.10, 0.5, 2.9, 20, Color("9cfff5", .73 * fade), maxf(2.0, radius * .054), true)
     if look == "Inkstorm":
-        draw_arc(pos, radius * 1.055, 0.0, TAU, 26, Color("62ffe6", .86 * fade), maxf(2.0, radius * .037), true)
+        draw_arc(draw_pos, radius * 1.055, 0.0, TAU, 26, Color("62ffe6", .86 * fade), maxf(2.0, radius * .037), true)
 
 func _header() -> void:
     if neon_logo != null:
