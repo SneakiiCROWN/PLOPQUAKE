@@ -1,9 +1,195 @@
-.godot/
-*.apk
-*.aab
-*.keystore
-*.jks
-*.p12
-.env
-*.log
+# Godot project specific gitignore
+# See https://github.com/github/gitignore/blob/main/Godot.gitignore
+
+# Export settings
 export_presets.cfg
+
+# Hidden by default - will ignore afterwards
+.user/
+
+# Logs
+log/
+
+# GDScript files
+*.gdc
+
+# Mailmap file
+.map
+
+# Absolute path to .env file to keep it out of the repo
+.env
+
+# If you are using VS Code you may want to start with
+# .vscode/settings.json and .vscode/tasks.json
+.vscode/
+
+# Save state
+*.save
+
+# Export of the project - won't be present in new project
+export_presets.cfg
+
+# Do not ignore values you do not intend to ignore!
+# Learn more at https://help.github.com/articles/ignoring-files
+
+# --- Godot specific ---
+
+# Auto-generated project files
+*.csproj
+*.sln
+
+# Mono debug files
+*.mono.dll
+*.pdb
+
+# Platform specific
+/tmp/
+
+# Templates cache
+/templates/
+
+# If you use Visual Studio
+*.tmp
+*.user
+*.suo
+*.userosscache
+
+# Cache data directory
+/cache/
+
+# Generated documentation
+/doc/
+
+# Master effective ignore file
+/.gitignore
+
+# --- End Godot ---
+
+# Godot 4 specific
+# Local configuration file:
+# NOTE: It is recommended *NOT* to commit the user specific settings.
+# It is safe to ignore *.gdidata
+*.gdidata
+
+# Icon
+# If you want to ignore the icon, uncomment the following line:
+# icon*.png
+
+# If you use GDExtension
+# GDExtension config
+gde_config.ini
+
+# If you use GDExtension
+# GDExtension exported strings
+gde_strs.po
+
+# If you use Visual Studio Code
+# Extensions may store VS Code settings in this directory
+.vscode/
+
+# If you use Godot 4 and Visual Studio
+# Precompiled header
+*.pch
+
+# If you use Godot 4 and Visual Studio
+# Object files
+*.o
+
+# If you use Godot 4 and Visual Studio
+# Program database
+*.db
+
+# If you use Godot 4 and Visual Studio
+# Browse information
+*.bsc
+
+# If you use Godot 4 and Visual Studio
+# Program database
+*.pdb
+
+# If you use Godot 4 and Visual Studio
+# Program database
+*.pgc
+
+# If you use Godot 4 and Visual Studio
+# Program database
+*.ddc
+
+# --- Godot 3 specific ---
+
+# If you use Visual Studio
+*.suo
+
+# If you use Visual Studio
+.user
+
+# If you use MonoDevelop
+*.user
+
+# --- End Godot ---
+
+# --- Godot Android specific ---
+
+# Android keystore
+*.jks
+*.keystore
+
+# Android debug keystore
+# ANDROID_KEY_STORE
+
+# Android export
+# bins/
+
+# If you use ant
+# ant.out
+
+# If you use Gradle
+# Gradle cache
+.gradle/
+
+# Android Studio
+/build/
+
+# If you use Unity4 style (unlikely but possible)
+# assets/StreamingAssets/*.js
+
+# If you use Unity4 style (unlikely but possible)
+# assets/Plugins/x86/*.so
+
+# If you use Unity4 style (unlikely but possible)
+# assets/Plugins/x86_64/*.so
+
+# If you use Unity4 style (unlikely but possible)
+# assets/Plugins/ARM/*.so
+
+# If you use Unity4 style (unlikely but possible)
+# assets/Plugins/ARM64/*.so
+
+# --- End Godot Android specific ---
+
+# --- Godot iOS specific ---
+
+# If you use Xcode
+*.m
+*.h
+*.mm
+
+# If you use Xcode
+*.pbxproj
+
+# --- End Godot iOS specific ---
+
+# --- General ---
+
+# Binary files (by default)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ogg
+*.mp3
+*.wav
+*.zip
+*.tar
+
+# --- End General ---

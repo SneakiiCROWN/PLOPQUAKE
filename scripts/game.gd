@@ -113,6 +113,7 @@ var board_textures: Dictionary = {}
 var saved_event_month := -1
 var soundtrack: AudioStreamPlayer
 var music_player: AudioStreamPlayer
+var _music_was_playing := false
 var sfx: Dictionary = {}
 var draw_scale := 1.0
 var draw_origin := Vector2.ZERO
@@ -234,6 +235,7 @@ func _ready() -> void:
     _make_audio()
     _backup_previous_native_save()
     _load_all()
+    _music_was_playing = music_on
     _ensure_current_day()
     _ensure_weekly()
     _ensure_ghoul_year()
@@ -319,14 +321,14 @@ func _make_audio() -> void:
     # Main soundtrack
     soundtrack = AudioStreamPlayer.new()
     soundtrack.stream = load("res://audio/factory_loop.wav")
-    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 9.0
+    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
     if soundtrack.stream is AudioStreamWAV:
         soundtrack.stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
     add_child(soundtrack)
     
     # Dedicated music player for jingles and special tracks
     music_player = AudioStreamPlayer.new()
-    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 4.0
+    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
     add_child(music_player)
     
     for name in ["plop", "boom", "reward"]:
@@ -440,8 +442,7 @@ func _play_impact(tier: int = 0) -> void:
     player.play()
 
 func _play_jingle(tier: int = 0) -> void:
-    # Jingles are musical cues: they follow the music switch, not SFX.
-    if not music_on:
+    if not music_on or not sound_on:
         return
     var jingles: Array = []
     if tier >= 8:
@@ -1231,14 +1232,15 @@ func _physics_process(delta: float) -> void:
     # Update soundtrack volume based on music_volume setting
     soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 9.0
     music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 4.0
-    soundtrack.stream_paused = false
     var play_music := music_on and not gameover
-    if play_music and not soundtrack.playing:
-        soundtrack.play()
-    # Track the intended state even when a desktop/CI machine has no audio
-    # endpoint (Godot's dummy/missing device never reports playing=true).
-    if soundtrack.stream != null:
-        soundtrack.stream_paused = not play_music
+    # Track intended state to avoid flickering from repeated play()/stop() calls.
+    if play_music != _music_was_playing:
+        print("MUSIC STATE CHANGE: play_music=", play_music, " was_playing=", _music_was_playing, " playing=", soundtrack.playing)
+        if play_music:
+            soundtrack.play()
+        else:
+            soundtrack.stop()
+        _music_was_playing = play_music
     if low_power and Engine.get_physics_frames() % 2 == 1:
         # Physics still runs at 60 Hz. Only redraws can be throttled below.
         pass
@@ -2536,10 +2538,10 @@ func _activate(id: String) -> void:
     elif id == "music":
         music_on = not music_on
         if not music_on:
-            soundtrack.stream_paused = true
+            if soundtrack.playing:
+                soundtrack.stop()
             music_player.stop()
         else:
-            soundtrack.stream_paused = false
             if not soundtrack.playing:
                 soundtrack.play()
     elif id == "music_vol":
