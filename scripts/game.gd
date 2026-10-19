@@ -301,6 +301,36 @@ func _make_audio() -> void:
         click_player.volume_db = -12.0
         add_child(click_player)
         sfx[cue] = click_player
+    
+    # Kenney Impact Sounds for gameplay (blob landings, collisions, BOOM)
+    var impact_sounds := [
+        "impactSoft_light_001", "impactSoft_light_002", "impactSoft_light_003", "impactSoft_light_004",
+        "impactSoft_medium_001", "impactSoft_medium_002", "impactSoft_medium_003", "impactSoft_medium_004",
+        "impactGeneric_light_001", "impactGeneric_light_002", "impactGeneric_light_003", "impactGeneric_light_004",
+        "impactWood_light_001", "impactWood_light_002", "impactWood_light_003", "impactWood_light_004",
+    ]
+    for name in impact_sounds:
+        if ResourceLoader.exists("res://audio/kenney_ui/%s.ogg" % name):
+            var player := AudioStreamPlayer.new()
+            player.stream = load("res://audio/kenney_ui/%s.ogg" % name)
+            player.volume_db = -10.0
+            add_child(player)
+            sfx[name] = player
+    
+    # Kenney Music Jingles for special moments
+    var jingle_names := [
+        "jingles_NES00", "jingles_NES01", "jingles_NES02", "jingles_NES03",
+        "jingles_NES04", "jingles_NES05", "jingles_NES06", "jingles_NES07",
+        "jingles_NES08", "jingles_NES09", "jingles_NES10", "jingles_NES11",
+        "jingles_NES12", "jingles_NES13", "jingles_NES14", "jingles_NES15", "jingles_NES16"
+    ]
+    for name in jingle_names:
+        if ResourceLoader.exists("res://audio/kenney_music/%s.ogg" % name):
+            var player := AudioStreamPlayer.new()
+            player.stream = load("res://audio/kenney_music/%s.ogg" % name)
+            player.volume_db = -6.0
+            add_child(player)
+            sfx[name] = player
 
 func _play_sfx(name: String) -> void:
     if not sound_on:
@@ -336,6 +366,54 @@ func _play_kenney_ui(category: String) -> void:
     player.play()
     # Clean up after playing
     player.queue_free.call_deferred()
+
+func _play_impact(tier: int = 0) -> void:
+    if not sound_on:
+        return
+    # Pick a random soft impact sound based on tier
+    var sounds: Array = [
+        "impactSoft_light_001", "impactSoft_light_002", "impactSoft_light_003", "impactSoft_light_004",
+        "impactSoft_medium_001", "impactSoft_medium_002", "impactSoft_medium_003", "impactSoft_medium_004",
+    ]
+    if tier >= 5:
+        sounds = [
+            "impactGeneric_light_001", "impactGeneric_light_002", "impactGeneric_light_003", "impactGeneric_light_004",
+            "impactWood_light_001", "impactWood_light_002", "impactWood_light_003", "impactWood_light_004",
+        ]
+    var available: Array[String] = []
+    for s in sounds:
+        if sfx.has(s):
+            available.append(s)
+    if available.is_empty():
+        return
+    var chosen: String = available[rng.randi_range(0, available.size() - 1)]
+    var player: AudioStreamPlayer = sfx[chosen]
+    player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 10.0
+    player.pitch_scale = rng.randf_range(0.9, 1.1)
+    player.play()
+
+func _play_jingle(tier: int = 0) -> void:
+    if not sound_on:
+        return
+    var jingles: Array = []
+    if tier >= 8:
+        jingles = ["jingles_NES13", "jingles_NES14", "jingles_NES15", "jingles_NES16"]
+    elif tier >= 5:
+        jingles = ["jingles_NES08", "jingles_NES09", "jingles_NES10", "jingles_NES11", "jingles_NES12"]
+    elif tier >= 3:
+        jingles = ["jingles_NES04", "jingles_NES05", "jingles_NES06", "jingles_NES07"]
+    else:
+        jingles = ["jingles_NES01", "jingles_NES02", "jingles_NES03"]
+    var available: Array[String] = []
+    for j in jingles:
+        if sfx.has(j):
+            available.append(j)
+    if available.is_empty():
+        return
+    var chosen: String = available[rng.randi_range(0, available.size() - 1)]
+    var player: AudioStreamPlayer = sfx[chosen]
+    player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 6.0
+    player.play()
 
 func _today() -> String:
     var d := Time.get_date_dict_from_system()
@@ -766,6 +844,7 @@ func _drop(x: float) -> void:
     var r: float = RADII[next_tier]
     _spawn_blob(next_tier, Vector2(clampf(x, LEFT + r + 1.0, RIGHT - r - 1.0), TOP + r + 2.0))
     drops += 1
+    _play_kenney_ui("drop")  # Kenney drop sound
     if drops > 0 and drops % 100 == 0:
         tickets += 70
         notice = "100-DROP SURVIVOR! +70 TICKETS"
@@ -864,6 +943,9 @@ func _merge_at(i: int, j: int) -> void:
     popup_scale = 0.18
     _play_sfx("merge")
     _haptic(22 if tier < 5 else 38)
+    # Play jingle for significant merges
+    if tier >= 3 or combo_count >= 3:
+        _play_jingle(tier)
     if tier >= 5 and first_discovery:
         notice = "NEW EVOLUTION: %s!" % NAMES[tier]
         notice_timer = 2.6
@@ -935,6 +1017,7 @@ func _boom() -> void:
     shake_amount = 15.0 if not low_motion else 0.0
     boom_pulse = 0.65
     _play_sfx("boom")
+    _play_jingle(9)  # Victory jingle for BOOM
     _haptic(55)
     _save_all()
 
@@ -1029,7 +1112,11 @@ func _physics_process(delta: float) -> void:
         elif float(b.x) > RIGHT - r:
             b.x = RIGHT - r
             b.vx = -absf(float(b.vx)) * 0.26
+        # Play impact sound when blob hits floor (first time or significant bounce)
         if float(b.y) > FLOOR - r:
+            if not b.has("landed") or absf(float(b.vy)) > 200.0:
+                b.landed = true
+                _play_impact(int(b.t))
             b.y = FLOOR - r
             b.vy = -absf(float(b.vy)) * 0.12
             b.vx = float(b.vx) * 0.94
@@ -1153,6 +1240,18 @@ func _button(r: Rect2, id: String, title: String, accent: Color = Color("283b62"
     elif button_chrome != null and not low_power and r.size.y >= 62.0:
         # Original PLOPQUAKE industrial panel 9-sliced for all other controls.
         _draw_nine_patch(button_chrome, r.grow(-2.0), Color(1,1,1,0.44 if depressed else 0.64))
+    elif not low_power:
+        # Use Kenney UI button textures for a polished look
+        var btn_tex_name := "button_round_flat"
+        if depressed:
+            btn_tex_name = "button_round_gloss"
+        elif r.size.y >= 62.0:
+            btn_tex_name = "button_round_gradient"
+        else:
+            btn_tex_name = "button_round_flat"
+        var kenney_btn := load("res://art/kenney_ui/%s.png" % btn_tex_name) as Texture2D
+        if kenney_btn != null:
+            _draw_nine_patch(kenney_btn, r.grow(-2.0), Color(1,1,1,0.7 if depressed else 0.9))
     if depressed:
         _filled_round(r.grow(-6.0), Color(0.98,0.99,1.0,0.11), 13.0)
     draw_line(r.position + Vector2(22, 6), r.position + Vector2(r.size.x - 22, 6), Color(1,1,1,0.12 if depressed else 0.29), 2.0)
