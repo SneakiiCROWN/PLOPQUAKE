@@ -145,7 +145,6 @@ var menu_cards: Dictionary = {}
 var seasonal_portraits: Dictionary = {}
 var accessory_textures: Dictionary = {}
 var banner_texture: Texture2D
-var boom_burst_texture: Texture2D
 var button_chrome: Texture2D
 var green_button_chrome: Texture2D
 var green_button_pressed: Texture2D
@@ -171,9 +170,25 @@ var ui_scale := 1.0
 var background_parallax := 0.0
 var combo_popup_scale := 0.0
 var combo_popup_text := ""
-var perfect_drop_window := false
-var perfect_drop_timer := 0.0
 var blob_wobble_phase := 0.0
+# v1.0.6 — one coordinated feedback rail. Maximum two lines are visible at
+# once: a primary event line and a secondary reward/status line. Nothing is
+# drawn over the playfield or the danger line.
+const FEEDBACK_MAX_VISIBLE := 2
+var feedback_items: Array[Dictionary] = []
+var merge_feedback_points := 0
+var merge_feedback_tier := 0
+var merge_feedback_timer := 0.0
+var merge_feedback_hold := 0.0
+var boom_banner_timer := 0.0
+var boom_banner_bonus := 0
+var perfect_banner_timer := 0.0
+var aim_still_time := 0.0
+# Preloaded once in _ready(). Loading textures inside _draw() caused the first
+# frame of a menu to show an opaque white rectangle while the texture uploaded.
+var kenney_button_flat: Texture2D
+var kenney_button_gradient: Texture2D
+var kenney_button_gloss: Texture2D
 
 func _ready() -> void:
     font = ThemeDB.fallback_font
@@ -182,7 +197,6 @@ func _ready() -> void:
     board_textures = {"Factory": load("res://art/board_classic.png"), "Midnight": load("res://art/board_night.png"), "Candy Lab": load("res://art/board_candy.png"), "Ghoulfall": load("res://art/board_ghoul.png"), "After Hours": load("res://art/board_after_hours.png"), "Molten Core": load("res://art/board_molten.png"), "Icebox": load("res://art/board_icebox.png")}
     neon_logo = load("res://art/integrated/neon_logo.png")
     banner_texture = load("res://art/integrated/ui/spooky_strip.png")
-    boom_burst_texture = load("res://art/integrated/ui/boom_burst.png")
     button_chrome = load("res://art/integrated/ui/industrial_panel.png")
     green_button_chrome = load("res://art/third_party/wenrexa_green_action.png")
     green_button_pressed = load("res://art/third_party/wenrexa_green_action_pressed.png")
@@ -203,6 +217,12 @@ func _ready() -> void:
         accessory_textures[k] = load("res://art/integrated/accessories/%s.png" % k)
     for k in ["play", "daily", "event", "goals"]:
         menu_cards[k] = load("res://art/integrated/ui/card_%s.png" % k)
+    # Cache every texture that can appear in a button. These used to be loaded
+    # lazily inside _draw(), which produced white control rectangles on the
+    # first rendered frame of Goals, Visual settings and the Locker.
+    kenney_button_flat = load("res://art/kenney_ui/button_round_flat.png") as Texture2D
+    kenney_button_gradient = load("res://art/kenney_ui/button_round_gradient.png") as Texture2D
+    kenney_button_gloss = load("res://art/kenney_ui/button_round_gloss.png") as Texture2D
     
     # Load Kenney particle pack textures
     _load_kenney_particles()
@@ -299,14 +319,14 @@ func _make_audio() -> void:
     # Main soundtrack
     soundtrack = AudioStreamPlayer.new()
     soundtrack.stream = load("res://audio/factory_loop.wav")
-    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
+    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 9.0
     if soundtrack.stream is AudioStreamWAV:
         soundtrack.stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
     add_child(soundtrack)
     
     # Dedicated music player for jingles and special tracks
     music_player = AudioStreamPlayer.new()
-    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
+    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 4.0
     add_child(music_player)
     
     for name in ["plop", "boom", "reward"]:
@@ -420,7 +440,8 @@ func _play_impact(tier: int = 0) -> void:
     player.play()
 
 func _play_jingle(tier: int = 0) -> void:
-    if not music_on or not sound_on:
+    # Jingles are musical cues: they follow the music switch, not SFX.
+    if not music_on:
         return
     var jingles: Array = []
     if tier >= 8:
@@ -439,8 +460,114 @@ func _play_jingle(tier: int = 0) -> void:
         return
     var chosen: String = available[rng.randi_range(0, available.size() - 1)]
     music_player.stream = sfx[chosen]
-    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
+    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 4.0
     music_player.play()
+
+# v1.0.6 — Coordinated feedback rail.
+# Merge chains are aggregated instead of emitting one overlapping label per
+# merge. At most two short lines are shown, in the strip below the arena.
+func _feedback_show(text: String, color: Color, priority: int = 2, lifetime: float = 1.3, kind: String = "event") -> void:
+    # A rapid repeat of the same kind refreshes the existing line rather than
+    # stacking a duplicate on top of it.
+    for item in feedback_items:
+        if str(item.get("kind", "")) == kind and float(item.get("age", 0.0)) < 0.24:
+            item["text"] = text
+            item["color"] = color
+            item["priority"] = priority
+            item["life"] = maxf(float(item.get("life", 0.0)), float(item.get("age", 0.0)) + lifetime)
+            return
+    while feedback_items.size() >= FEEDBACK_MAX_VISIBLE:
+        var worst := 0
+        for i in range(1, feedback_items.size()):
+            var a: Dictionary = feedback_items[i]
+            var b: Dictionary = feedback_items[worst]
+            if int(a.get("priority", 0)) < int(b.get("priority", 0)):
+                worst = i
+            elif int(a.get("priority", 0)) == int(b.get("priority", 0)) and float(a.get("age", 0.0)) > float(b.get("age", 0.0)):
+                worst = i
+        feedback_items.remove_at(worst)
+    feedback_items.append({"text": text, "color": color, "priority": priority,
+        "life": lifetime, "age": 0.0, "kind": kind})
+
+func _update_feedback(delta: float) -> void:
+    for i in range(feedback_items.size() - 1, -1, -1):
+        var item: Dictionary = feedback_items[i]
+        item["age"] = float(item.get("age", 0.0)) + delta
+        if float(item.get("age", 0.0)) >= float(item.get("life", 0.0)):
+            feedback_items.remove_at(i)
+    if merge_feedback_timer > 0.0:
+        merge_feedback_timer = maxf(0.0, merge_feedback_timer - delta)
+        merge_feedback_hold += delta
+        if (merge_feedback_timer <= 0.0 or merge_feedback_hold >= 0.55) and merge_feedback_points > 0:
+            _flush_merge_feedback()
+            merge_feedback_hold = 0.0
+    if boom_banner_timer > 0.0:
+        boom_banner_timer = maxf(0.0, boom_banner_timer - delta)
+    if perfect_banner_timer > 0.0:
+        perfect_banner_timer = maxf(0.0, perfect_banner_timer - delta)
+
+func _flush_merge_feedback() -> void:
+    if merge_feedback_points <= 0:
+        return
+    var tier := clampi(merge_feedback_tier, 0, 9)
+    var tier_color: Color = palette[tier]
+    _feedback_show("+%s  %s!" % [_score_text(merge_feedback_points), str(NAMES[tier])],
+        tier_color, 2, 1.05, "merge")
+    merge_feedback_points = 0
+
+func _feedback_primary() -> Dictionary:
+    var best_item: Dictionary = {}
+    for item in feedback_items:
+        if best_item.is_empty() or int(item.get("priority", 0)) > int(best_item.get("priority", 0)):
+            best_item = item
+        elif int(item.get("priority", 0)) == int(best_item.get("priority", 0)) and float(item.get("age", 0.0)) < float(best_item.get("age", 0.0)):
+            best_item = item
+    return best_item
+
+func _feedback_secondary() -> Dictionary:
+    var primary := _feedback_primary()
+    var found: Dictionary = {}
+    for item in feedback_items:
+        if item == primary:
+            continue
+        if found.is_empty() or int(item.get("priority", 0)) > int(found.get("priority", 0)):
+            found = item
+    return found
+
+func _show_merge_notification(tier: int, points: int, combo: int) -> void:
+    # Accumulate a chain. A single line updates after the chain pauses or every
+    # half second, so a x20 chain never becomes a wall of old labels.
+    merge_feedback_points += points
+    merge_feedback_tier = maxi(merge_feedback_tier, tier)
+    merge_feedback_timer = minf(0.36, merge_feedback_timer + 0.18)
+    if merge_feedback_timer <= 0.0:
+        merge_feedback_timer = 0.18
+
+func _show_boom_notification(bonus: int) -> void:
+    boom_banner_bonus = bonus
+    boom_banner_timer = 1.15
+    feedback_items.clear()
+    merge_feedback_points = 0
+    merge_feedback_timer = 0.0
+    merge_feedback_hold = 0.0
+
+func _show_milestone_notification(text: String, color: Color) -> void:
+    _feedback_show(text, color, 3, 1.8, "milestone")
+
+func _show_rankup_notification(rank: String) -> void:
+    _feedback_show("NEW RANK: %s" % rank, Color("d6ffb4"), 4, 2.1, "rank")
+
+func _show_mission_notification(reward: int) -> void:
+    _feedback_show("MISSION COMPLETE! +%d TICKETS" % reward, Color("b1ed79"), 3, 2.0, "mission")
+
+func _show_evolution_notification(name: String) -> void:
+    _feedback_show("NEW EVOLUTION: %s!" % name, Color("fff3ae"), 4, 2.4, "evolution")
+
+func _show_reward_notification(text: String) -> void:
+    _feedback_show(text, Color("ffe69b"), 3, 2.0, "reward")
+
+func _show_error_notification(text: String) -> void:
+    _feedback_show(text, Color("ffc3ad"), 1, 2.0, "error")
 
 func _today() -> String:
     var d := Time.get_date_dict_from_system()
@@ -594,7 +721,7 @@ func _flush_save() -> void:
         "sound": sound_on, "low_motion": low_motion, "contrast": high_contrast, "guide": show_guide,
         "quest_today": quest_today, "quest_stats": quest_stats, "quest_claimed": quest_claimed, "boards": board_owned,
         "board_equipped": board_equipped, "achievements_claimed": achievements_claimed, "low_power": low_power,
-        "sound_volume": sound_volume, "haptics": haptics, "music_on": music_on, "seasonal_art": seasonal_art,
+        "sound_volume": sound_volume, "music_volume": music_volume, "haptics": haptics, "music_on": music_on, "seasonal_art": seasonal_art,
         "ghoul_year": ghoul_year, "ghoul_stats": ghoul_stats, "ghoul_claimed": ghoul_claimed,
         "top_chain": top_chain, "week": weekly_key, "weekly_stats": weekly_stats,
         "weekly_claimed": weekly_claimed, "first_help_seen": first_help_seen}
@@ -775,9 +902,11 @@ func _load_all() -> void:
     board_equipped = str(d.get("board_equipped", "Factory"))
     achievements_claimed = d.get("achievements_claimed", [])
     low_power = bool(d.get("low_power", false))
-    sound_volume = clampf(float(d.get("sound_volume", 0.75)), 0.0, 1.0)
+    sound_volume = clampf(float(d.get("sound_volume", 0.8)), 0.0, 1.0)
+    music_volume = clampf(float(d.get("music_volume", 0.6)), 0.0, 1.0)
     haptics = bool(d.get("haptics", true))
-    music_on = bool(d.get("music_on", false))
+    # Music defaults on for fresh installs; older saves without the key keep it on.
+    music_on = bool(d.get("music_on", true))
     seasonal_art = bool(d.get("seasonal_art", true))
     top_chain = maxi(0, int(d.get("top_chain", 0)))
     weekly_key = str(d.get("week", ""))
@@ -874,18 +1003,14 @@ func _drop(x: float) -> void:
     _play_kenney_ui("drop")  # Kenney drop sound
     if drops > 0 and drops % 100 == 0:
         tickets += 70
-        notice = "100-DROP SURVIVOR! +70 TICKETS"
-        notice_timer = 4.0
-        _play_sfx("reward")
+        _show_reward_notification("100-DROP SURVIVOR! +70 TICKETS")
     if _is_halloween() and (drops == 13 or drops == 31):
         var secret_key := "oct%d-%d" % [Time.get_date_dict_from_system().year, drops]
         if not claimed.has(secret_key):
             claimed.append(secret_key)
             sweets += 13 if drops == 13 else 31
             tickets += 25 if drops == 13 else 75
-            notice = "SECRET FOUND! GHOULFALL BONUS!"
-            notice_timer = 3.0
-            _play_sfx("reward")
+            _show_reward_notification("SECRET FOUND! GHOULFALL BONUS!")
     totals["drops"] = int(totals.get("drops", 0)) + 1
     if _is_halloween():
         _ensure_ghoul_year()
@@ -897,10 +1022,6 @@ func _drop(x: float) -> void:
     _play_sfx("plop")
     _haptic(12)
     _save_all()
-    
-    # Reset perfect drop window
-    perfect_drop_window = false
-    perfect_drop_timer = 0.0
 
 func _merge_at(i: int, j: int) -> void:
     if i >= blobs.size() or j >= blobs.size():
@@ -936,11 +1057,6 @@ func _merge_at(i: int, j: int) -> void:
         })
         # Add screen shake based on tier
         shake_amount += lerp(2.0, 8.0, float(tier) / 9.0) * (1.0 if not low_motion else 0.3)
-        # Combo popup
-        combo_popup_scale = 1.0
-        combo_popup_text = "MERGE!"
-        if combo_count > 1:
-            combo_popup_text = "x%d COMBO!" % (combo_count + 1)
     
     blobs.remove_at(j)
     blobs.remove_at(i)
@@ -978,21 +1094,17 @@ func _merge_at(i: int, j: int) -> void:
             ghoul_stats[1] = int(ghoul_stats[1]) + 1
         ghoul_stats[3] = maxi(int(ghoul_stats[3]), score)
     tickets += 1 if tier < 4 else 3
-    _burst(center, "+%d  %s!" % [points, NAMES[tier]], palette[tier])
-    if combo_count >= 3:
-        _burst(center + Vector2(0,-50), "x%d COMBO!" % combo_count, Color("ffda7b"))
-    # Enhanced particle burst
+    # Use the coordinated feedback system.
+    _show_merge_notification(tier, points, combo_count)
+    # Keep bursts for particle effects only
     _spark_cloud(center, palette[tier], 12 + mini(20, tier * 3))
     if tier >= 3:
         _shockwave(center, palette[tier], tier)
     if int(score / 10000) > score_milestone:
         score_milestone = int(score / 10000)
-        _burst(center + Vector2(0.0, -70.0), "SCORE MILESTONE!", Color("fff3ae"))
+        _show_milestone_notification("SCORE MILESTONE!", Color("fff3ae"))
     if _factory_rank_index() > old_rank:
-        _burst(center + Vector2(0.0, -90.0), "FACTORY RANK UP!", Color("d6ffb4"))
-        notice = "NEW RANK: %s" % _factory_rank_label()
-        notice_timer = 3.2
-        _play_sfx("reward")
+        _show_rankup_notification(_factory_rank_label())
     shake_amount = lerp(4.0, 12.0, float(tier) / 9.0) if not low_motion else 0.0
     popup_scale = 0.22
     _play_sfx("merge")
@@ -1001,15 +1113,12 @@ func _merge_at(i: int, j: int) -> void:
     if tier >= 3 or combo_count >= 3:
         _play_jingle(tier)
     if tier >= 5 and first_discovery:
-        notice = "NEW EVOLUTION: %s!" % NAMES[tier]
-        notice_timer = 2.6
+        _show_evolution_notification(NAMES[tier])
     if mission_progress >= mission_goal:
         tickets += 30
         mission_progress = 0
         mission_goal = mini(12, mission_goal + 2)
-        notice = "MISSION COMPLETE! +30 TICKETS"
-        notice_timer = 3.0
-        _play_sfx("reward")
+        _show_mission_notification(30)
     _save_all()
 
 func _spark_cloud(at: Vector2, tint: Color, count: int) -> void:
@@ -1079,10 +1188,10 @@ func _boom() -> void:
     best = maxi(best, score)
     if _is_halloween():
         ghoul_stats[3] = maxi(int(ghoul_stats[3]), score)
-    notice = "BOOOOM!  +%d" % bonus
-    notice_timer = 2.5
+    # Use new notification system
+    _show_boom_notification(bonus)
     danger_seconds = 0.0
-    _burst(Vector2(360, 720), "BOOM!", Color("ffd67a"))
+    # Keep visual effects
     _spark_cloud(Vector2(360, 720), Color("ffb863"), 42)
     _shockwave(Vector2(360, 720), Color("ffdf86"), 9)
     shake_amount = 15.0 if not low_motion else 0.0
@@ -1096,6 +1205,9 @@ func _physics_process(delta: float) -> void:
     elapsed += delta
     combo_timer = maxf(0.0, combo_timer - delta)
     
+    # Update the single coordinated feedback rail.
+    _update_feedback(delta)
+    
     # Hold-to-drop timer
     if aiming and hold_drop_count > 0:
         hold_drop_timer += delta
@@ -1104,6 +1216,9 @@ func _physics_process(delta: float) -> void:
             _drop(aim_x)
             hold_drop_count += 1
     
+    # Perfect-drop now rewards a deliberately steady aim, not every release.
+    if aiming:
+        aim_still_time += delta
     for i in range(ui_tap_rings.size() - 1, -1, -1):
         ui_tap_rings[i]["age"] = float(ui_tap_rings[i]["age"]) + delta
         if float(ui_tap_rings[i]["age"]) > 0.30:
@@ -1114,13 +1229,15 @@ func _physics_process(delta: float) -> void:
             save_timer = 0.0
             _flush_save()
     # Update soundtrack volume based on music_volume setting
-    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
-    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
-    
-    var play_music := music_on and screen in ["home", "game"] and not gameover
+    soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 9.0
+    music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 4.0
+    soundtrack.stream_paused = false
+    var play_music := music_on and not gameover
     if play_music and not soundtrack.playing:
         soundtrack.play()
-    if soundtrack.playing:
+    # Track the intended state even when a desktop/CI machine has no audio
+    # endpoint (Godot's dummy/missing device never reports playing=true).
+    if soundtrack.stream != null:
         soundtrack.stream_paused = not play_music
     if low_power and Engine.get_physics_frames() % 2 == 1:
         # Physics still runs at 60 Hz. Only redraws can be throttled below.
@@ -1135,14 +1252,6 @@ func _physics_process(delta: float) -> void:
         eff["timer"] = float(eff["timer"]) - delta
         if float(eff["timer"]) <= 0.0:
             merge_effects.remove_at(i)
-    
-    # Update combo popup
-    combo_popup_scale = maxf(0.0, combo_popup_scale - delta * 3.0)
-    
-    # Update perfect drop timer
-    perfect_drop_timer = maxf(0.0, perfect_drop_timer - delta)
-    if perfect_drop_timer <= 0.0:
-        perfect_drop_window = false
     
     if Engine.get_physics_frames() % 180 == 0:
         _ensure_current_day()
@@ -1325,6 +1434,12 @@ func _left(text_value: String, x: float, baseline_y: float, size: int = 23, colo
         draw_string(font, Vector2(x + 1.0, baseline_y + 2.0), text_value, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size, Color(0, 0, 0.09, color.a * 0.55))
     draw_string(font, Vector2(x, baseline_y), text_value, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size, color)
 
+func _fit_font_size(text_value: String, max_size: int, max_width: float, min_size: int = 18) -> int:
+    var size := max_size
+    while size > min_size and font.get_string_size(text_value, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > max_width:
+        size -= 1
+    return size
+
 func _draw_nine_patch(tex: Texture2D, target: Rect2, tint: Color) -> void:
     if tex == null or target.size.x < 80.0 or target.size.y < 46.0:
         return
@@ -1343,6 +1458,17 @@ func _draw_nine_patch(tex: Texture2D, target: Rect2, tint: Color) -> void:
             var region := Rect2(src_x[xx], src_y[yy], src_x[xx + 1] - src_x[xx], src_y[yy + 1] - src_y[yy])
             draw_texture_rect_region(tex, dest, region, tint)
 
+func _draw_texture_fit(tex: Texture2D, target: Rect2, tint: Color = Color.WHITE) -> void:
+    if tex == null:
+        return
+    var src := tex.get_size()
+    if src.x <= 0.0 or src.y <= 0.0:
+        return
+    var fit := minf(target.size.x / src.x, target.size.y / src.y)
+    var shown := src * fit
+    var pos := target.position + (target.size - shown) * 0.5
+    draw_texture_rect(tex, Rect2(pos, shown), false, tint)
+
 # Volume slider with drag support
 var slider_dragging: String = ""
 
@@ -1356,38 +1482,30 @@ func _draw_volume_slider(r: Rect2, id: String, label: String, value: float) -> v
     var handle_x := track_rect.position.x + fill_width
     var handle_rect := Rect2(handle_x - 14, track_rect.position.y - 6, 28, 24)
     _filled_round(handle_rect, Color("fff7d8"), 14)
-    # Store for interaction
-    if pressed_button == id:
-        # Will be handled in _touch_down/_touch_up
-        pass
+    # Register the full row as a touch target, so tapping anywhere on the
+    # slider starts a drag instead of falling through to the screen behind it.
+    buttons.append({"rect": r, "id": id})
 
 func _button(r: Rect2, id: String, title: String, accent: Color = Color("283b62"), txt: Color = Color("f2f5ff"), size: int = 26) -> void:
     var depressed := pressed_button == id
     var face := accent.darkened(0.16) if depressed else accent
     _panel(r, face, accent.lightened(0.42) if depressed else accent.lightened(0.28), 18.0)
-    var green_action := accent.g > 0.73 and accent.g > accent.r * 1.13 and r.size.y >= 62.0
+    var green_action := accent.g > 0.48 and accent.g > accent.r * 1.10 and r.size.y >= 52.0
+    # Every texture used here is cached in _ready(). Never call load() from
+    # _draw(): the first frame would display an opaque white rectangle while
+    # the texture is still being uploaded to the GPU.
     if green_action and green_button_chrome != null:
-        # Commercial-safe Wenrexa CC0 green panel: real active button, not a mockup.
         var chosen_green := green_button_pressed if depressed else green_button_chrome
-        _draw_nine_patch(chosen_green, r.grow(-2.0), Color(1,1,1,0.82))
-    elif button_chrome != null and not low_power and r.size.y >= 62.0:
-        # Original PLOPQUAKE industrial panel 9-sliced for all other controls.
-        _draw_nine_patch(button_chrome, r.grow(-2.0), Color(1,1,1,0.44 if depressed else 0.64))
-    elif not low_power:
-        # Use Kenney UI button textures for a polished look
-        var btn_tex_name := "button_round_flat"
-        if depressed:
-            btn_tex_name = "button_round_gloss"
-        elif r.size.y >= 62.0:
-            btn_tex_name = "button_round_gradient"
-        else:
-            btn_tex_name = "button_round_flat"
-        var kenney_btn := load("res://art/kenney_ui/%s.png" % btn_tex_name) as Texture2D
-        if kenney_btn != null:
-            var tint_color := Color(1, 1, 1, 0.85 if depressed else 1.0)
-            if accent == Color("f5698a"):  # BOOM button
-                tint_color = Color(1, 0.9, 0.7, tint_color.a)
-            _draw_nine_patch(kenney_btn, r.grow(-2.0), tint_color)
+        _draw_nine_patch(chosen_green, r.grow(-2.0), Color(1,1,1,0.84))
+    elif button_chrome != null and r.size.y >= 48.0:
+        _draw_nine_patch(button_chrome, r.grow(-2.0), Color(1,1,1,0.50 if depressed else 0.66))
+    elif kenney_button_flat != null:
+        var btn_tex: Texture2D = kenney_button_flat
+        if depressed and kenney_button_gloss != null:
+            btn_tex = kenney_button_gloss
+        elif r.size.y >= 62.0 and kenney_button_gradient != null:
+            btn_tex = kenney_button_gradient
+        _draw_nine_patch(btn_tex, r.grow(-2.0), Color(1, 1, 1, 0.90 if depressed else 1.0))
     if depressed:
         _filled_round(r.grow(-6.0), Color(0.98,0.99,1.0,0.11), 13.0)
     draw_line(r.position + Vector2(22, 6), r.position + Vector2(r.size.x - 22, 6), Color(1,1,1,0.12 if depressed else 0.29), 2.0)
@@ -1399,29 +1517,76 @@ func _button(r: Rect2, id: String, title: String, accent: Color = Color("283b62"
     buttons.append({"rect": r, "id": id})
 
 func _art_card(r: Rect2, id: String, caption: String, descriptor: String, tint: Color) -> void:
-    var tex: Texture2D = menu_cards.get("event" if id == "events" else id)
+    var key := "play" if id == "normal" else ("event" if id == "events" else id)
+    var tex: Texture2D = menu_cards.get(key)
+    var art_height := r.size.y * 0.52
     if tex != null:
-        draw_texture_rect(tex,r,false)
+        # Crop the illustration above the baked-in mockup caption. Drawing the
+        # complete card and covering the bottom produced ghosted double text.
+        var target_aspect := r.size.x / maxf(1.0, art_height)
+        var src_h := tex.get_height() * 0.47
+        var src_w := minf(tex.get_width(), src_h * target_aspect)
+        var src_x := (tex.get_width() - src_w) * 0.5
+        draw_texture_rect_region(tex, Rect2(r.position, Vector2(r.size.x, art_height)),
+            Rect2(src_x, 0, src_w, src_h))
     else:
-        _panel(r, Color("25395e"), tint, 19)
-    # Calendar and event date badges are rendered from live game time, not the mockup.
+        _panel(Rect2(r.position, Vector2(r.size.x, art_height)), Color("25395e"), tint, 19)
+    # One clean, opaque caption deck for every card. No baked caption survives.
+    var cap := Rect2(r.position.x + 3, r.position.y + art_height - 2,
+        r.size.x - 6, r.size.y - art_height + 2)
+    _panel(cap, Color("111a33"), tint.darkened(0.18), 18)
+    draw_line(Vector2(cap.position.x + 24, cap.position.y + 2),
+        Vector2(cap.end.x - 24, cap.position.y + 2),
+        Color(tint.r, tint.g, tint.b, 0.78), 2.0)
+    _label(caption, r.get_center().x, cap.position.y + 37, 26, Color("fff7d8"), r.size.x - 28)
+    _label(descriptor, r.get_center().x, cap.position.y + 70, 15, Color("e7eaff"), r.size.x - 26)
+    # The daily card gets one live date plate, replacing the baked mockup date.
     if id == "daily":
-        var day_rect := Rect2(r.position.x+r.size.x*.40,r.position.y+r.size.y*.24,r.size.x*.20,r.size.y*.24)
-        _filled_round(day_rect,Color("e9ddff"),9.0)
-        _label(str(Time.get_date_dict_from_system().day),day_rect.get_center().x,day_rect.get_center().y+13,30,Color("323464"),day_rect.size.x)
-    # Cover baked titles in the concept art with actual accessible game text.
-    draw_rect(Rect2(r.position.x + 8,r.position.y+r.size.y*0.51,r.size.x-16,r.size.y*0.46),Color(.035,.043,.14,.83))
-    _label(caption,r.get_center().x,r.position.y+r.size.y*.74,27,Color("fff7d8"),r.size.x-24)
-    _label(descriptor,r.get_center().x,r.position.y+r.size.y*.90,15,Color("e7eaff"),r.size.x-24)
+        _draw_daily_date_plate(r)
     if pressed_button == id:
         draw_rect(r.grow(-4),Color(1,1,1,.11))
     buttons.append({"rect":r,"id":id})
 
+func _draw_daily_date_plate(r: Rect2) -> void:
+    var day := int(Time.get_date_dict_from_system().day)
+    var month := str(Time.get_date_dict_from_system().month)
+    var month_names := ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+        "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+    var plate := Rect2(r.position.x + r.size.x * 0.20, r.position.y + r.size.y * 0.055,
+        r.size.x * 0.28, r.size.y * 0.44)
+    _filled_round(Rect2(plate.position + Vector2(0, 4), plate.size), Color(0.03, 0.03, 0.10, 0.38), 11)
+    _filled_round(plate, Color("f7f1e8"), 11)
+    _filled_round(Rect2(plate.position, Vector2(plate.size.x, plate.size.y * 0.24)),
+        Color("df5668"), 11)
+    _label(month_names[clampi(int(month) - 1, 0, 11)], plate.get_center().x,
+        plate.position.y + plate.size.y * 0.18, 12, Color.WHITE, plate.size.x - 6)
+    _label(str(day), plate.get_center().x, plate.position.y + plate.size.y * 0.72,
+        32, Color("323464"), plate.size.x - 6)
+
 func _background() -> void:
-    draw_rect(Rect2(0, 0, WIDTH, HEIGHT), Color("080e1e") if high_contrast else Color("0c1631"))
+    var visible := _visible_design_rect()
+    draw_rect(visible, Color("080e1e") if high_contrast else Color("0c1631"))
     if menu_texture != null:
-        draw_texture_rect(menu_texture, Rect2(0, 0, WIDTH, HEIGHT), false)
-    draw_rect(Rect2(0, 0, WIDTH, 132), Color(0.045,0.07,0.16,0.35))
+        if visible.size.y > HEIGHT + 0.5 or visible.size.x > WIDTH + 0.5:
+            # Cover the taller/narrower S23-style viewport with a centred crop.
+            # The art keeps its aspect ratio; only the decorative edges crop.
+            var tex_size := menu_texture.get_size()
+            var target_aspect := visible.size.x / maxf(1.0, visible.size.y)
+            var src := Rect2(Vector2.ZERO, tex_size)
+            if tex_size.x / tex_size.y > target_aspect:
+                var crop_w := tex_size.y * target_aspect
+                src = Rect2((tex_size.x - crop_w) * 0.5, 0, crop_w, tex_size.y)
+            else:
+                var crop_h := tex_size.x / target_aspect
+                src = Rect2(0, (tex_size.y - crop_h) * 0.5, tex_size.x, crop_h)
+            draw_texture_rect_region(menu_texture, visible, src)
+        else:
+            draw_texture_rect(menu_texture, Rect2(0, 0, WIDTH, HEIGHT), false)
+    draw_rect(Rect2(visible.position, Vector2(visible.size.x, 132)), Color(0.045,0.07,0.16,0.35))
+
+func _visible_design_rect() -> Rect2:
+    var sc := maxf(0.0001, draw_scale)
+    return Rect2(-draw_origin / sc, get_viewport_rect().size / sc)
 
 func _draw_portrait(pos: Vector2, tier: int, radius: float, fade: float, look: String) -> void:
     var safe_tier := clampi(tier, 0, 9)
@@ -1463,7 +1628,8 @@ func _draw_portrait(pos: Vector2, tier: int, radius: float, fade: float, look: S
     # Ground shadow with fade based on height
     if not low_power:
         var cc: Color = palette[clampi(tier, 0, 9)]
-        var shadow_alpha: float = 0.18 * fade * (1.0 - minf(1.0, (pos.y - (FLOOR - radius)) / 200.0))
+        var height_ratio := clampf((pos.y - (FLOOR - radius)) / 200.0, 0.0, 1.0)
+        var shadow_alpha: float = 0.18 * fade * (1.0 - height_ratio)
         draw_circle(pos + Vector2(sway, radius * 0.14 + 10.0), radius * 1.02, Color(0.01, 0.02, 0.09, shadow_alpha))
         if tier >= 5:
             draw_circle(pos + Vector2(sway, 0), radius * 1.15, Color(cc.r, cc.g, cc.b, .035 * fade))
@@ -1520,8 +1686,16 @@ func _draw_accessory(pos: Vector2, radius: float, fade: float, look: String) -> 
     var tex: Texture2D = accessory_textures[accessory]
     if tex == null:
         return
-    var scale_factor := radius * (1.42 if accessory == "cat_ears" else 1.30)
-    var center := pos + Vector2(0, -radius * (0.90 if accessory == "cat_ears" else 1.05))
+    var placement := {
+        "crown": Vector2(1.08, -0.80),
+        "pumpkin_hat": Vector2(1.12, -0.78),
+        "headphones": Vector2(1.16, -0.62),
+        "witch_hat": Vector2(1.12, -0.76),
+        "cat_ears": Vector2(1.08, -0.68),
+    }
+    var fit: Vector2 = placement.get(accessory, Vector2(1.20, -0.92))
+    var scale_factor := radius * float(fit.x)
+    var center := pos + Vector2(0, -radius * float(fit.y))
     draw_texture_rect(tex, Rect2(center - Vector2(scale_factor,scale_factor)*0.5, Vector2.ONE * scale_factor),false, Color(1,1,1,fade))
 
 func _blob(pos: Vector2, tier: int, radius: float, fade: float = 1.0, preview_skin: String = "") -> void:
@@ -1658,11 +1832,17 @@ func _draw_home() -> void:
     _label("YOUR FACTORY",360,194,21,Color("e8b7fc"))
     _label("BEST  %s" % _score_text(best),205,259,33,Color("ffdb87"),302)
     _label("BIGGEST  %d / 10" % maxi(1,int(totals.get("biggest",0))+1),518,259,28,Color("c4f7ff"),275)
-    _label("DRAG TO DROP  •  MATCH TWO  •  CHARGE BOOM",360,340,21,Color("dffca3"))
+    _label("DROP • MATCH • CHARGE BOOM",360,340,21,Color("dffca3"))
+    
+    # Play Normal card with icon
     _art_card(Rect2(45,365,306,202),"normal","PLAY NORMAL","Beat your best score",Color("ffc86e"))
+    # Daily Mode card with icon
     _art_card(Rect2(368,365,307,202),"daily","DAILY MODE","A fresh challenge every day",Color("bd8dff"))
+    # Events/Ghoulfall card
     _art_card(Rect2(45,584,306,202),"events","GHOULFALL" if _is_halloween() else "SEASONAL EVENTS","Earn exclusive cosmetics",Color("ffab5b"))
+    # Goals & Rewards card
     _art_card(Rect2(368,584,307,202),"goals","GOALS & REWARDS","Complete quests; earn tickets",Color("5ccaff"))
+    
     _panel(Rect2(48,805,626,77),Color("233858"),Color("7b73bd"))
     _label("%d TICKETS   •   %d SWEETS" % [tickets,sweets],360,853,27,Color("ffe6aa"))
     _button(Rect2(45,904,306,76),"locker","FACTORY LOCKER",Color("583f94"),Color.WHITE,26)
@@ -1670,9 +1850,9 @@ func _draw_home() -> void:
     _button(Rect2(45,996,306,75),"settings","SETTINGS",Color("354c77"),Color.WHITE,25)
     _button(Rect2(368,996,307,75),"help","HOW TO PLAY",Color("426c82"),Color.WHITE,25)
     _button(Rect2(45,1088,630,75),"credits","CREDITS",Color("4a5d8a"),Color.WHITE,25)
-    _label("RANK: %s • CHAIN x%d" % [_factory_rank_label(),top_chain],360,1192,23,Color("ccffa3"))
-    _label("EARN YOUR COSMETICS  •  NO ADS  •  OFFLINE",360,1248,18,Color("bdd2e9"))
-    _label("v1.0 ANDROID RELEASE",360,1298,15,Color("9daacc"))
+    _label("RANK: %s • CHAIN x%d" % [_factory_rank_label(),top_chain],360,1188,23,Color("ccffa3"))
+    _label("EARN YOUR COSMETICS  •  NO ADS  •  OFFLINE",360,1238,18,Color("bdd2e9"))
+    _label("v1.0.6 ANDROID",360,1268,14,Color("9daacc"))
 
 func _draw_factory_rails() -> void:
     # Four small cropped textures: they sit UNDER the moving sprites, so the factory
@@ -1763,10 +1943,6 @@ func _draw_game() -> void:
                 var thickness: float = maxf(2.0, RADII[int(eff["tier"])] * 0.08 * (1.0 - progress))
                 draw_arc(eff["pos"], radius, 0.0, TAU, 32, Color(c.r, c.g, c.b, alpha), thickness, true)
     
-    for burst in bursts:
-        var life := float(burst.life)
-        var c: Color = burst.color
-        _label(str(burst.text),float(burst.x),float(burst.y)-(1.3-life)*67.0,24,Color(c.r,c.g,c.b,clampf(life,0,1)),430)
     if not low_motion and not low_power:
         for ring in impact_rings:
             var life_fraction := 1.0 - float(ring.age) / float(ring.life)
@@ -1775,40 +1951,101 @@ func _draw_game() -> void:
                 Color(cc.r, cc.g, cc.b, life_fraction * 0.65), 2.0 + life_fraction * 5.0, true)
     if boom_pulse > .0 and not low_motion:
         draw_arc(Vector2(360,720),380.0*(1.0-boom_pulse),0,TAU,50,Color(.98,.84,.48,boom_pulse*.56),8.0)
-    if danger_seconds > .05:
-        _panel(Rect2(144,456,431,66),Color("ac3d5a"),Color("ffc3ad"))
-        _label("SAVE IT!  %.1fs" % maxf(0,3.5-danger_seconds),360,499,32,Color.WHITE)
-    # Position notices below the arena instead of covering the creatures.
-    _panel(Rect2(45,1049,630,64),Color("253657"),Color("506c96"))
-    if notice_timer > 0:
-        _label(notice,360,1090,20,Color("e6fcad"),604)
-    else:
-        _label("MERGE %d MORE  •  %d TICKETS" % [maxi(0,mission_goal-mission_progress),tickets],360,1090,23,Color("e6fcad"))
+    # The danger warning lives in the feedback rail, never over the pile.
+    _draw_feedback_rail()
     _panel(Rect2(40,1128,310,88),Color("283d64"),Color("647fad"))
     _blob(Vector2(93,1171),next_tier,24)
     _left("DROP  %s" % NAMES[next_tier],134,1162,23,Color("f9f4e9"))
     _left("ON DECK: %s" % NAMES[deck_tier],134,1194,19,Color("b2d9ff"))
-    var boom_ready := charge >= 99.9
-    _button(Rect2(361,1128,319,88),"boom","BOOM! READY" if boom_ready else "BOOM! %d%%" % int(charge),Color("f5698a") if boom_ready else Color("475576"),Color("281e3a") if boom_ready else Color.WHITE,28)
-    if boom_ready and boom_burst_texture != null and not low_power:
-        draw_texture_rect(boom_burst_texture,Rect2(366,1121,91,95),false,Color(1,1,1,.80))
-    draw_rect(Rect2(376,1195,289 * charge / 100.0,7),Color("ffe47c"))
+    _draw_boom_button(Rect2(361,1128,319,88))
     _label("DRAG TO AIM  •  RELEASE TO DROP",360,1254,18,Color("c1d8ef"))
     if combo_timer > 0.0 and combo_count >= 3:
-        _label("x%d CHAIN!" % combo_count,360,274,23,Color("ffe69b"))
-    
-    # Render combo popup
-    if combo_popup_scale > 0.05 and not low_motion:
-        var scale: float = combo_popup_scale
-        var alpha: float = clampf(combo_popup_scale * 2.0, 0.0, 1.0)
-        _label(combo_popup_text, 360, 340, int(40 * scale), Color(1, 0.95, 0.6, alpha), 500)
-    
-    # Render perfect drop indicator
-    if perfect_drop_window and not low_motion:
-        var alpha: float = perfect_drop_timer / 0.6
-        draw_circle(Vector2(aim_x, TOP + 40), 12.0 + 8.0 * (1.0 - alpha), Color(1, 0.9, 0.4, alpha * 0.6))
-        draw_circle(Vector2(aim_x, TOP + 40), 18.0 + 12.0 * (1.0 - alpha), Color(1, 1, 0.6, alpha * 0.3))
-        _label("PERFECT!", aim_x, TOP + 60, int(24 * alpha), Color(1, 0.95, 0.4, alpha), 200)
+        _draw_combo_badge()
+
+func _draw_combo_badge() -> void:
+    var text_value := "x%d CHAIN" % combo_count
+    var text_size := 20
+    var text_width := font.get_string_size(text_value, HORIZONTAL_ALIGNMENT_LEFT, -1, text_size).x
+    var badge_w := maxf(112.0, text_width + 34.0)
+    _filled_round(Rect2(360.0 - badge_w * 0.5, 242.0, badge_w, 30.0), Color(0.03, 0.05, 0.13, 0.86), 15.0)
+    var pulse := 1.0 + (0.0 if low_motion else 0.035 * sin(elapsed * 13.0))
+    _label(text_value, 360, 264, int(float(text_size) * pulse), Color("ffe69b"), badge_w - 12.0)
+
+func _draw_feedback_rail() -> void:
+    var rail := Rect2(45, 1048, 630, 66)
+    if boom_banner_timer > 0.0:
+        var flash := 0.5 + 0.5 * sin(elapsed * 22.0)
+        _panel(rail, Color("47203c"), Color("ffd77d"), 19)
+        _filled_round(rail.grow(-4), Color(1.0, 0.72, 0.30, 0.06 + 0.05 * flash), 16)
+        _label("BOOM!  +%s" % _score_text(boom_banner_bonus), 360, 1082, 32, Color("ffe89a"), 604)
+        _label("PILE CLEARED  •  CHARGE RESET", 360, 1105, 14, Color("ffd1e0"), 604)
+        return
+    var primary := _feedback_primary()
+    var secondary := _feedback_secondary()
+    if perfect_banner_timer > 0.0:
+        secondary = {"text": "PERFECT DROP!  Steady aim bonus", "color": Color("ffe69b")}
+    if danger_seconds > 0.05:
+        primary = {"text": "DANGER!  SAVE IT  %.1fs" % maxf(0.0, 3.5 - danger_seconds), "color": Color("ffc3ad")}
+        secondary = {"text": "THE PILE IS TOO HIGH — USE YOUR BOOM", "color": Color("ffd9cf")}
+    _panel(rail, Color("253657"), Color("506c96"), 18)
+    if not primary.is_empty():
+        var pcolor: Color = primary.get("color", Color.WHITE)
+        var fade := 1.0
+        if primary.has("age") and primary.has("life"):
+            fade = clampf((float(primary["life"]) - float(primary["age"])) / 0.16, 0.0, 1.0)
+        _label(str(primary.get("text", "")), 360, 1075, 23,
+            Color(pcolor.r, pcolor.g, pcolor.b, fade), 604)
+        if not secondary.is_empty():
+            var scolor: Color = secondary.get("color", Color("c9dcf3"))
+            _label(str(secondary.get("text", "")), 360, 1100, 15,
+                Color(scolor.r, scolor.g, scolor.b, 0.92), 604)
+    elif not secondary.is_empty():
+        var scolor2: Color = secondary.get("color", Color("c9dcf3"))
+        _label(str(secondary.get("text", "")), 360, 1086, 20, scolor2, 604)
+    elif notice_timer > 0.0:
+        _label(notice, 360, 1086, 19, Color("e6fcad"), 604)
+    else:
+        _label("MERGE %d MORE  •  %d TICKETS" % [maxi(0, mission_goal - mission_progress), tickets],
+            360, 1086, 21, Color("e6fcad"), 604)
+
+func _draw_boom_button(r: Rect2) -> void:
+    var ready := charge >= 99.9
+    var face := Color("f2b34f") if ready else Color("2b3d60")
+    var edge := Color("fff0ad") if ready else Color("647fad")
+    _panel(r, face, edge, 18.0)
+    # The charge fill is part of the control, so the state stays readable even
+    # in bright sunlight or at a glance during a fast chain.
+    var inner := r.grow(-5)
+    var fill_w := inner.size.x * clampf(charge / 100.0, 0.0, 1.0)
+    if fill_w > 1.0:
+        _filled_round(Rect2(inner.position, Vector2(fill_w, inner.size.y)),
+            Color("f8d47c") if ready else Color("486f63"), 14.0)
+    if ready and not low_motion:
+        var glow := 0.5 + 0.5 * sin(elapsed * 5.5)
+        _filled_round(r.grow(3.0), Color(1.0, 0.90, 0.48, 0.05 + 0.05 * glow), 21.0)
+        _panel(r, face, Color("fff6c9"), 18.0)
+    # A drawn starburst reads at a glance and replaces the old cropped neon
+    # strip that looked like a stray purple rectangle inside the control.
+    var icon_center := Vector2(r.end.x - 35.0, r.get_center().y)
+    var icon_tint := Color("5a2b40") if ready else Color("d7ecff")
+    _draw_boom_icon(icon_center, 20.0 if not ready else 23.0, icon_tint)
+    var text_color := Color("2b1e31") if ready else Color.WHITE
+    var text_value := "BOOM! READY" if ready else "BOOM! %d%%" % int(charge)
+    _label(text_value, r.position.x + 146.0, r.get_center().y + 10.0, 27 if ready else 25, text_color, 224.0)
+    if ready:
+        _label("TAP TO RESCUE", r.position.x + 146.0, r.get_center().y + 31.0, 12, Color("5a2b40"), 224.0)
+    buttons.append({"rect": r, "id": "boom"})
+
+func _draw_boom_icon(center: Vector2, radius: float, tint: Color) -> void:
+    var points := PackedVector2Array()
+    for i in range(16):
+        var angle := -PI * 0.5 + TAU * float(i) / 16.0
+        var reach := radius if i % 2 == 0 else radius * 0.44
+        points.append(center + Vector2(cos(angle), sin(angle)) * reach)
+    draw_colored_polygon(points, tint)
+    draw_circle(center, radius * 0.52, tint.darkened(0.18))
+    if not low_power:
+        draw_circle(center + Vector2(-radius * 0.16, -radius * 0.18), radius * 0.17, Color(1, 1, 1, 0.55))
 
 func _draw_pause() -> void:
     _menu_frame("PAUSED", "Take a break. Your pile waits for you.")
@@ -1825,7 +2062,10 @@ func _draw_pause() -> void:
 func _menu_frame(title: String, subtitle: String) -> void:
     _header()
     _panel(Rect2(35,152,650,1071),Color("17274a"),Color("7998c7"),32)
-    _label(title,340,237,46,Color("fdf0c9"),548)
+    # Keep long headings clear of the close button. The title shrinks only
+    # when it would otherwise run underneath the X control.
+    var title_size := _fit_font_size(title, 46, 470.0, 24)
+    _label(title,328,237,title_size,Color("fdf0c9"),470)
     # Contextual feedback stays visible in menus after a reward or save action.
     var menu_tip := notice if notice_timer > 0 and (notice.find("SAVE") >= 0 or notice.find("RESTORE") >= 0 or notice.find("CLIPBOARD") >= 0 or notice.find("REWARD") >= 0 or notice.find("CLAIM") >= 0 or notice.find("NOT READY") >= 0) else subtitle
     _label(menu_tip,355,281,18,Color("dff6b7") if menu_tip != subtitle else Color("bacbe8"),600)
@@ -1835,13 +2075,13 @@ func _draw_help() -> void:
     _menu_frame("HOW TO PLAY", "Three moves. A million little disasters.")
     _panel(Rect2(74,321,573,180),Color("263b61"))
     _label("1  DROP A BLOB",360,370,30,Color("e1ff9d"))
-    _blob(Vector2(211,437),0,30)
+    _blob(Vector2(211,437),0,30,1.0,"Classic")
     _label("DRAG TO AIM  •  RELEASE TO DROP",438,446,18,Color("f3f5fc"),369)
     _panel(Rect2(74,521,573,209),Color("263b61"))
     _label("2  MATCH TWO OF A KIND",360,565,29,Color("e1ff9d"))
-    _blob(Vector2(245,638),0,30)
-    _blob(Vector2(328,638),0,30)
-    _blob(Vector2(455,638),1,42)
+    _blob(Vector2(245,638),0,30,1.0,"Classic")
+    _blob(Vector2(328,638),0,30,1.0,"Classic")
+    _blob(Vector2(455,638),1,42,1.0,"Classic")
     draw_line(Vector2(358,638),Vector2(397,638),Color("ffde88"),5)
     _label("THEY MERGE INTO A BIGGER CREATURE",360,709,18,Color("f4f1fc"))
     _panel(Rect2(74,750,573,205),Color("263b61"))
@@ -1889,22 +2129,22 @@ func _draw_settings() -> void:
     _button(Rect2(462,320,189,70),"data","DATA",Color("4c6894") if settings_tab == 2 else Color("2d3f63"),Color.WHITE,22)
     _panel(Rect2(68,423,585,502),Color("223658"))
     if settings_tab == 0:
-        _label("GAME AUDIO",360,494,35,Color("d9ff9e"))
+        _label("GAME AUDIO",360,475,34,Color("d9ff9e"))
         
         # Sound Effects toggle with slider
-        _button(Rect2(96,537,528,82),"sound","SOUND EFFECTS: %s" % ("ON" if sound_on else "OFF"),Color("496c80"))
-        _draw_volume_slider(Rect2(96,635,528,80), "vol", "SFX VOLUME", sound_volume)
-        _draw_volume_slider(Rect2(96,723,528,74), "music_vol", "MUSIC VOLUME", music_volume)
-        _button(Rect2(96,805,528,74),"haptic","PHONE VIBRATION: %s" % ("ON" if haptics else "OFF"),Color("38517a"),Color.WHITE,23)
-        _button(Rect2(96,875,528,74),"music","BACKGROUND MUSIC: %s" % ("ON" if music_on else "OFF"),Color("38517a"),Color.WHITE,23)
-        _label("UI SOUND: NATHAN GIBSON • CC BY 4.0",360,969,15,Color("c4d8f0"),544)
+        _button(Rect2(96,500,528,64),"sound","SOUND EFFECTS: %s" % ("ON" if sound_on else "OFF"),Color("496c80"),Color.WHITE,23)
+        _draw_volume_slider(Rect2(96,570,528,64), "vol", "SFX VOLUME", sound_volume)
+        _draw_volume_slider(Rect2(96,640,528,64), "music_vol", "MUSIC VOLUME", music_volume)
+        _button(Rect2(96,710,528,64),"haptic","PHONE VIBRATION: %s" % ("ON" if haptics else "OFF"),Color("38517a"),Color.WHITE,23)
+        _button(Rect2(96,780,528,64),"music","BACKGROUND MUSIC: %s" % ("ON" if music_on else "OFF"),Color("38517a"),Color.WHITE,23)
+        _label("UI SOUND: NATHAN GIBSON • CC BY 4.0",360,884,14,Color("c4d8f0"),544)
     elif settings_tab == 1:
-        _label("VISUAL COMFORT",360,489,34,Color("d9ff9e"))
-        _button(Rect2(96,520,528,77),"motion","REDUCED MOTION: %s" % ("ON" if low_motion else "OFF"),Color("38517a"),Color.WHITE,23)
-        _button(Rect2(96,615,528,77),"power","BATTERY SAVER: %s" % ("ON" if low_power else "OFF"),Color("38517a"),Color.WHITE,23)
-        _button(Rect2(96,710,528,77),"guide","AIMING GUIDE: %s" % ("ON" if show_guide else "OFF"),Color("38517a"),Color.WHITE,23)
-        _button(Rect2(96,792,528,59),"contrast","HIGH CONTRAST: %s" % ("ON" if high_contrast else "OFF"),Color("38517a"),Color.WHITE,22)
-        _button(Rect2(96,858,528,59),"seasonal","EVENT DECOR: %s" % ("ON" if seasonal_art else "OFF"),Color("38517a"),Color.WHITE,22)
+        _label("VISUAL COMFORT",360,480,34,Color("d9ff9e"))
+        _button(Rect2(96,510,528,66),"motion","REDUCED MOTION: %s" % ("ON" if low_motion else "OFF"),Color("38517a"),Color.WHITE,23)
+        _button(Rect2(96,592,528,66),"power","BATTERY SAVER: %s" % ("ON" if low_power else "OFF"),Color("38517a"),Color.WHITE,23)
+        _button(Rect2(96,674,528,66),"guide","AIMING GUIDE: %s" % ("ON" if show_guide else "OFF"),Color("38517a"),Color.WHITE,23)
+        _button(Rect2(96,756,528,66),"contrast","HIGH CONTRAST: %s" % ("ON" if high_contrast else "OFF"),Color("38517a"),Color.WHITE,22)
+        _button(Rect2(96,838,528,66),"seasonal","EVENT DECOR: %s" % ("ON" if seasonal_art else "OFF"),Color("38517a"),Color.WHITE,22)
     else:
         _label("SAVE & TRANSFER",360,489,34,Color("d9ff9e"))
         _label("Keep scores and unlocks when changing builds.",360,536,20,Color("d6e4ff"),544)
@@ -1927,7 +2167,7 @@ func _draw_collection() -> void:
         _panel(Rect2(x,y,278,120),Color("293f64"))
         var known: bool = i <= int(totals.get("biggest",0))
         if known:
-            _blob(Vector2(x+65,y+61),i,minf(RADII[i]*.62,43.0))
+            _blob(Vector2(x+65,y+61),i,minf(RADII[i]*.62,43.0),1.0,"Classic")
         else:
             _label("?",x+67,y+79,55,Color("8094be"),98)
         _left(NAMES[i] if known else "???",x+121,y+56,25,Color("fff6e1") if known else Color("98a7c2"))
@@ -1964,7 +2204,7 @@ func _draw_locker() -> void:
             elif i == 6: color = Color("28797d")
             _panel(Rect2(x+19,y+26,84,76),color,Color("b9c9ee"),11)
             if board_textures.has(str(entries[i])):
-                draw_texture_rect(board_textures[str(entries[i])],Rect2(x+25,y+31,72,63),false)
+                _draw_texture_fit(board_textures[str(entries[i])],Rect2(x+24,y+30,74,68))
         _label(str(entries[i]),x+192,y+45,18,Color("f2eccc"),167)
         var state := "EQUIPPED" if current == entries[i] else ("EQUIP" if owned.has(entries[i]) else ("%d SWEETS" % costs[i] if str(entries[i]) in ["Ghostfire", "Pumpkin Pop", "Ghoulfall"] else "%d TICKETS" % costs[i]))
         _button(Rect2(x+19,y+109,240,48),"buy:%d" % i,state,Color("527f67") if owned.has(entries[i]) else Color("765a83"),Color.WHITE,18)
@@ -1975,31 +2215,31 @@ func _draw_locker() -> void:
 func _draw_events() -> void:
     _menu_frame("GHOULFALL", "Every October. Unlocks stay yours forever.")
     _panel(Rect2(75,315,571,152),Color("493256") if _is_halloween() else Color("2c4260"))
-    _label("HALLOWEEN  •  %s" % ("LIVE NOW" if _is_halloween() else "RETURNS IN OCTOBER"),360,371,26,Color("ffe8a0"))
-    _label("SWEETS: %d    •    %d/4 CLAIMED" % [sweets, _claimed_ghoul_count()],360,418,27,Color("dcffc4"))
-    _label("EARN SWEETS BY MERGING • SPEND IN LOCKER",360,451,17,Color("e9dfef"))
     if _is_halloween() and seasonal_art and not low_power:
         var ghost: Texture2D = seasonal_portraits.get("ghost")
         var pumpkin: Texture2D = seasonal_portraits.get("pumpkin")
         if ghost != null:
-            draw_texture_rect(ghost,Rect2(82,330,105,105),false)
+            draw_texture_rect(ghost,Rect2(88,330,76,76),false)
         if pumpkin != null:
-            draw_texture_rect(pumpkin,Rect2(534,330,105,105),false)
+            draw_texture_rect(pumpkin,Rect2(556,330,76,76),false)
+    _label("HALLOWEEN  •  %s" % ("LIVE NOW" if _is_halloween() else "RETURNS IN OCTOBER"),360,358,24,Color("ffe8a0"),340)
+    _label("SWEETS: %d    •    %d/4 CLAIMED" % [sweets, _claimed_ghoul_count()],360,398,23,Color("dcffc4"),340)
+    _label("EARN SWEETS BY MERGING • SPEND IN LOCKER",360,431,14,Color("e9dfef"),430)
     for i in range(4):
-        var y := 490.0 + float(i)*137.0
+        var y := 482.0 + float(i)*130.0
         var value := mini(GHOUL_GOALS[i], int(ghoul_stats[i]))
-        _panel(Rect2(75,y,571,127),Color("283d5f"))
-        _left(str(GHOUL_TITLES[i]),94,y+34,24,Color("ffe2a0"))
+        _panel(Rect2(75,y,571,122),Color("283d5f"))
+        _left(str(GHOUL_TITLES[i]),94,y+31,24,Color("ffe2a0"))
         var sub := ["MERGE 35 BLOBS", "CREATE 10 BIG BLOBS", "USE BOOM 4 TIMES", "SCORE 25,000 IN A RUN"]
-        _left(str(sub[i]),94,y+70,19,Color("d1dcef"))
-        _left("%d / %d  •  +%d SWEETS" % [value,GHOUL_GOALS[i],GHOUL_REWARDS[i]],94,y+104,18,Color("b7f1bf"))
+        _left(str(sub[i]),94,y+64,19,Color("d1dcef"))
+        _left("%d / %d  •  +%d SWEETS" % [value,GHOUL_GOALS[i],GHOUL_REWARDS[i]],94,y+97,18,Color("b7f1bf"))
         var text_now := "CLAIM" if value >= GHOUL_GOALS[i] else "LOCKED"
         if bool(ghoul_claimed[i]): text_now = "CLAIMED"
-        _button(Rect2(463,y+40,164,64),"ghoul:%d" % i,text_now,Color("5b8b6a") if text_now == "CLAIM" else Color("435474"),Color.WHITE,19)
+        _button(Rect2(463,y+31,164,60),"ghoul:%d" % i,text_now,Color("5b8b6a") if text_now == "CLAIM" else Color("435474"),Color.WHITE,19)
     if _is_halloween() and banner_texture != null and seasonal_art and not low_power:
-        draw_texture_rect(banner_texture, Rect2(170,1007,390,53),false,Color(1,1,1,.85))
-    _label("SECRETS HIDE IN DROPS 13 & 31...",360,1071,20,Color("ffcfaa"))
-    _button(Rect2(93,1121,534,72),"back","BACK TO THE CHAOS",Color("9ee671"),Color("173037"),28)
+        draw_texture_rect(banner_texture, Rect2(170,1002,390,48),false,Color(1,1,1,.85))
+    _label("SECRETS HIDE IN DROPS 13 & 31...",360,1074,20,Color("ffcfaa"))
+    _button(Rect2(93,1118,534,72),"back","BACK TO THE CHAOS",Color("9ee671"),Color("173037"),28)
 
 func _claimed_ghoul_count() -> int:
     var result := 0
@@ -2011,7 +2251,7 @@ func _draw_gameover() -> void:
     _menu_frame("BATCH OVERFLOWED!", "Damn. That was close. Another go?")
     _label("YOUR RUN",360,392,29,Color("b6c9e5"))
     _label(_score_text(score),360,499,80,Color("d5ff87"))
-    _label("PERSONAL BEST %d" % best,360,559,27,Color("ffdb97"))
+    _label("PERSONAL BEST %s" % _score_text(best),360,559,27,Color("ffdb97"))
     _label("%d DROPS   /   %d MERGES   /   LEVEL %d" % [drops,merges,biggest+1],360,632,23)
     var tip := "MATCH IDENTICAL BLOBS TO CREATE BIGGER ONES!"
     if drops >= 8:
@@ -2097,7 +2337,10 @@ func _input(event: InputEvent) -> void:
             _touch_up(pos, event.index)
     elif event is InputEventScreenDrag and active_pointer == event.index:
         if aiming:
-            aim_x = clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+            var next_aim := clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+            if absf(next_aim - aim_x) > 0.5:
+                aim_still_time = 0.0
+            aim_x = next_aim
         elif slider_dragging != "":
             _handle_slider_drag(_pointer(event.position))
     elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -2108,7 +2351,10 @@ func _input(event: InputEvent) -> void:
             _touch_up(pos, -1)
     elif event is InputEventMouseMotion and active_pointer == -1:
         if aiming:
-            aim_x = clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+            var next_aim := clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+            if absf(next_aim - aim_x) > 0.5:
+                aim_still_time = 0.0
+            aim_x = next_aim
         elif slider_dragging != "":
             _handle_slider_drag(_pointer(event.position))
     elif event is InputEventKey and event.pressed and not event.echo:
@@ -2117,8 +2363,10 @@ func _input(event: InputEvent) -> void:
         elif screen == "game":
             if event.keycode == KEY_LEFT:
                 aim_x = maxf(LEFT + 28, aim_x - 40)
+                aim_still_time = 0.0
             elif event.keycode == KEY_RIGHT:
                 aim_x = minf(RIGHT - 28, aim_x + 40)
+                aim_still_time = 0.0
             elif event.keycode == KEY_ENTER:
                 _drop(aim_x)
             elif event.keycode == KEY_SPACE or event.keycode == KEY_B:
@@ -2139,9 +2387,8 @@ func _handle_slider_drag(pos: Vector2) -> void:
         var track_w := r.size.x - 80
         var rel_x := clampf(pos.x - track_x, 0.0, track_w)
         music_volume = clampf(rel_x / track_w, 0.0, 1.0)
-        soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
-        music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
-        _play_sfx("plop")
+        soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 9.0
+        music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 4.0
 
 func _touch_down(pos: Vector2, pointer_id: int) -> void:
     # Never allow a second finger to drop a blob or buy something accidentally.
@@ -2156,10 +2403,12 @@ func _touch_down(pos: Vector2, pointer_id: int) -> void:
             # Check if it's a volume slider
             if pressed_button in ["vol", "music_vol"]:
                 slider_dragging = pressed_button
+                _handle_slider_drag(pos)
             return
     if screen == "game" and pos.x >= LEFT and pos.x <= RIGHT and pos.y >= TOP and pos.y <= FLOOR:
         aiming = true
         aim_x = clampf(pos.x, LEFT + 27, RIGHT - 27)
+        aim_still_time = 0.0
         # Initialize hold-to-drop
         hold_drop_timer = 0.0
         hold_drop_count = 0
@@ -2178,24 +2427,31 @@ func _touch_up(pos: Vector2, pointer_id: int) -> void:
                 if ui_tap_rings.size() >= 7:
                     ui_tap_rings.pop_front()
                 ui_tap_rings.append({"pos": pos, "age": 0.0})
+            if chosen in ["vol", "music_vol"]:
+                # Dragging already updated the value. Do not run the old
+                # tap-to-step behaviour on release: it made the slider jump.
+                _play_sfx("plop")
+                _save_all()
+                queue_redraw()
+                return
             _activate(chosen)
         return
     if aiming:
         aiming = false
         hold_drop_timer = 0.0
         hold_drop_count = 0
+        var steady_aim := aim_still_time
+        aim_still_time = 0.0
         if pos.x >= LEFT and pos.x <= RIGHT and pos.y >= TOP - 15 and pos.y <= FLOOR + 18:
             var drop_x := clampf(pos.x, LEFT + 27, RIGHT - 27)
-            # Perfect drop detection - if released near the aim line
-            var aim_diff := absf(drop_x - aim_x)
-            if aim_diff < 8.0:
-                perfect_drop_window = true
-                perfect_drop_timer = 0.6
+            # Perfect drop requires a deliberately steady aim for 0.4s. The old
+            # check compared the release x with itself, so every drop qualified.
+            if steady_aim >= 0.4 and absf(drop_x - aim_x) < 8.0:
+                perfect_banner_timer = 0.9
+                score += 25
+                best = maxi(best, score)
                 _play_sfx("ui_confirm")
                 _haptic(8)
-                if not low_motion:
-                    combo_popup_scale = 0.8
-                    combo_popup_text = "PERFECT DROP!"
             _drop(drop_x)
 
 func _activate(id: String) -> void:
@@ -2282,21 +2538,13 @@ func _activate(id: String) -> void:
         if not music_on:
             soundtrack.stream_paused = true
             music_player.stop()
-        elif screen in ["home", "game"] and not gameover:
-            soundtrack.play()
+        else:
+            soundtrack.stream_paused = false
+            if not soundtrack.playing:
+                soundtrack.play()
     elif id == "music_vol":
-        if music_volume > .95:
-            music_volume = .25
-        else:
-            music_volume = minf(1.0, music_volume + .25)
-        soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
-        music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
-        _play_sfx("plop")
-    elif id == "vol":
-        if sound_volume > .95:
-            sound_volume = .25
-        else:
-            sound_volume = minf(1.0, sound_volume + .25)
+        soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 9.0
+        music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 4.0
         _play_sfx("plop")
     elif id.begins_with("tab:"):
         featured_shop = id.get_slice(":",1)
@@ -2410,15 +2658,16 @@ func _activate(id: String) -> void:
     queue_redraw()
 
 func _notification(what: int) -> void:
-    # Android application pause: persist the run and cancel dangling drag gestures.
-    if what == 2013 or what == 1006:
+    # Android app pause uses MainLoop's APPLICATION_PAUSED (2015); 2013 is the
+    # IME notification and used to fire during normal text input.
+    if what == 2015 or what == 1006:
         aiming = false
         active_pointer = -999
         pressed_button = ""
+        slider_dragging = ""
         _save_all()
         _flush_save()
     elif what == 2014:
         _ensure_current_day()
         _ensure_weekly()
         _ensure_ghoul_year()
-        pass
