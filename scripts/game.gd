@@ -1325,7 +1325,6 @@ func _left(text_value: String, x: float, baseline_y: float, size: int = 23, colo
         draw_string(font, Vector2(x + 1.0, baseline_y + 2.0), text_value, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size, Color(0, 0, 0.09, color.a * 0.55))
     draw_string(font, Vector2(x, baseline_y), text_value, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size, color)
 
-# Nine-patch keeps illustrated corners round, even on narrow or very wide buttons.
 func _draw_nine_patch(tex: Texture2D, target: Rect2, tint: Color) -> void:
     if tex == null or target.size.x < 80.0 or target.size.y < 46.0:
         return
@@ -1343,6 +1342,24 @@ func _draw_nine_patch(tex: Texture2D, target: Rect2, tint: Color) -> void:
             var dest := Rect2(dst_x[xx], dst_y[yy], dst_x[xx + 1] - dst_x[xx], dst_y[yy + 1] - dst_y[yy])
             var region := Rect2(src_x[xx], src_y[yy], src_x[xx + 1] - src_x[xx], src_y[yy + 1] - src_y[yy])
             draw_texture_rect_region(tex, dest, region, tint)
+
+# Volume slider with drag support
+var slider_dragging: String = ""
+
+func _draw_volume_slider(r: Rect2, id: String, label: String, value: float) -> void:
+    _label(label + ": %d%%" % int(value * 100), r.get_center().x, r.position.y + 20, 22, Color("fff7d8"), r.size.x)
+    var track_rect := Rect2(r.position.x + 40, r.position.y + 50, r.size.x - 80, 12)
+    _filled_round(track_rect, Color("15213c"), 6)
+    var fill_width: float = track_rect.size.x * value
+    _filled_round(Rect2(track_rect.position, Vector2(fill_width, track_rect.size.y)), Color("b1ed79"), 6)
+    # Draggable handle
+    var handle_x := track_rect.position.x + fill_width
+    var handle_rect := Rect2(handle_x - 14, track_rect.position.y - 6, 28, 24)
+    _filled_round(handle_rect, Color("fff7d8"), 14)
+    # Store for interaction
+    if pressed_button == id:
+        # Will be handled in _touch_down/_touch_up
+        pass
 
 func _button(r: Rect2, id: String, title: String, accent: Color = Color("283b62"), txt: Color = Color("f2f5ff"), size: int = 26) -> void:
     var depressed := pressed_button == id
@@ -1873,9 +1890,11 @@ func _draw_settings() -> void:
     _panel(Rect2(68,423,585,502),Color("223658"))
     if settings_tab == 0:
         _label("GAME AUDIO",360,494,35,Color("d9ff9e"))
+        
+        # Sound Effects toggle with slider
         _button(Rect2(96,537,528,82),"sound","SOUND EFFECTS: %s" % ("ON" if sound_on else "OFF"),Color("496c80"))
-        _button(Rect2(96,635,528,80),"vol","SFX VOLUME: %d%%" % int(sound_volume * 100),Color("38517a"),Color.WHITE,23)
-        _button(Rect2(96,723,528,74),"music_vol","MUSIC VOLUME: %d%%" % int(music_volume * 100),Color("38517a"),Color.WHITE,23)
+        _draw_volume_slider(Rect2(96,635,528,80), "vol", "SFX VOLUME", sound_volume)
+        _draw_volume_slider(Rect2(96,723,528,74), "music_vol", "MUSIC VOLUME", music_volume)
         _button(Rect2(96,805,528,74),"haptic","PHONE VIBRATION: %s" % ("ON" if haptics else "OFF"),Color("38517a"),Color.WHITE,23)
         _button(Rect2(96,875,528,74),"music","BACKGROUND MUSIC: %s" % ("ON" if music_on else "OFF"),Color("38517a"),Color.WHITE,23)
         _label("UI SOUND: NATHAN GIBSON • CC BY 4.0",360,969,15,Color("c4d8f0"),544)
@@ -2076,16 +2095,22 @@ func _input(event: InputEvent) -> void:
             _touch_down(pos, event.index)
         else:
             _touch_up(pos, event.index)
-    elif event is InputEventScreenDrag and active_pointer == event.index and aiming:
-        aim_x = clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+    elif event is InputEventScreenDrag and active_pointer == event.index:
+        if aiming:
+            aim_x = clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+        elif slider_dragging != "":
+            _handle_slider_drag(_pointer(event.position))
     elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
         var pos := _pointer(event.position)
         if event.pressed:
             _touch_down(pos, -1)
         else:
             _touch_up(pos, -1)
-    elif event is InputEventMouseMotion and active_pointer == -1 and aiming:
-        aim_x = clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+    elif event is InputEventMouseMotion and active_pointer == -1:
+        if aiming:
+            aim_x = clampf(_pointer(event.position).x, LEFT + 27, RIGHT - 27)
+        elif slider_dragging != "":
+            _handle_slider_drag(_pointer(event.position))
     elif event is InputEventKey and event.pressed and not event.echo:
         if event.keycode == KEY_ESCAPE or event.keycode == KEY_P:
             _activate("pause" if screen == "game" else "back")
@@ -2100,6 +2125,24 @@ func _input(event: InputEvent) -> void:
                 _boom()
     queue_redraw()
 
+func _handle_slider_drag(pos: Vector2) -> void:
+    if slider_dragging == "vol":
+        var r := pressed_rect
+        var track_x := r.position.x + 40
+        var track_w := r.size.x - 80
+        var rel_x := clampf(pos.x - track_x, 0.0, track_w)
+        sound_volume = clampf(rel_x / track_w, 0.0, 1.0)
+        _play_sfx("plop")
+    elif slider_dragging == "music_vol":
+        var r := pressed_rect
+        var track_x := r.position.x + 40
+        var track_w := r.size.x - 80
+        var rel_x := clampf(pos.x - track_x, 0.0, track_w)
+        music_volume = clampf(rel_x / track_w, 0.0, 1.0)
+        soundtrack.volume_db = linear_to_db(maxf(0.02, music_volume)) - 20.0
+        music_player.volume_db = linear_to_db(maxf(0.02, music_volume)) - 6.0
+        _play_sfx("plop")
+
 func _touch_down(pos: Vector2, pointer_id: int) -> void:
     # Never allow a second finger to drop a blob or buy something accidentally.
     if active_pointer != -999:
@@ -2110,6 +2153,9 @@ func _touch_down(pos: Vector2, pointer_id: int) -> void:
         if hit_rect.has_point(pos):
             pressed_button = str(buttons[i].id)
             pressed_rect = hit_rect
+            # Check if it's a volume slider
+            if pressed_button in ["vol", "music_vol"]:
+                slider_dragging = pressed_button
             return
     if screen == "game" and pos.x >= LEFT and pos.x <= RIGHT and pos.y >= TOP and pos.y <= FLOOR:
         aiming = true
@@ -2122,6 +2168,7 @@ func _touch_up(pos: Vector2, pointer_id: int) -> void:
     if active_pointer != pointer_id:
         return
     active_pointer = -999
+    slider_dragging = ""
     if pressed_button != "":
         var chosen := pressed_button
         var valid := pressed_rect.has_point(pos)
