@@ -13,7 +13,7 @@ const SAVE_PATH := "user://plopquake_native_v1.json"
 const SAVE_BACKUP := "user://plopquake_native_backup.json"
 const SAVE_RECOVERY := "user://plopquake_native_recovery.json"
 const SAVE_IMPORT_BACKUP := "user://plopquake_native_before_manual_restore.json"
-const MAX_PARTICLES := 72
+const MAX_PARTICLES := 120
 const ACHIEVEMENT_TITLES := ["100 MERGES", "300 DROPS", "20 BOOMS", "FIND LEVEL 8"]
 const ACHIEVEMENT_GOALS := [100, 300, 20, 8]
 const FACTORY_RANK_NAMES := ["NEW HIRE", "SPARK STARTER", "FUSION FAN", "BOOM TECH", "CHAOS ENGINEER", "MASTER MIXER", "FACTORY LEGEND"]
@@ -34,6 +34,10 @@ const NAMES := ["PIP", "BOOP", "MIMO", "GOB", "CHONK", "WOMP", "HONK", "HUGE", "
 const RADII := [23.0, 29.0, 37.0, 47.0, 60.0, 76.0, 96.0, 120.0, 146.0, 166.0]
 const CANDY_DATE_START := 10
 const CANDY_DATE_END := 10
+const HOLD_DROP_COOLDOWN := 0.18
+const MAX_HOLD_DROPS := 8
+const MERGE_SQUASH_DURATION := 0.12
+const MERGE_SQUASH_SCALE := 0.7
 
 var palette: Array[Color] = [
     Color("46dd98"), Color("68b8ff"), Color("ffd06d"), Color("f4779c"),
@@ -143,6 +147,13 @@ var ui_glint_phase := 0.0
 var ui_tap_rings: Array[Dictionary] = []
 var production_creatures: Array[Texture2D] = []
 var frame_parts: Dictionary = {}
+# v1.0 — hold-to-drop, improved merge feedback, particle effects
+var hold_drop_timer := 0.0
+var hold_drop_count := 0
+var merge_effects: Array[Dictionary] = []
+var kenney_particles: Array[Texture2D] = []
+var kenney_ui_sounds: Dictionary = {}
+var particle_textures: Array[Texture2D] = []
 
 func _ready() -> void:
     font = ThemeDB.fallback_font
@@ -172,6 +183,13 @@ func _ready() -> void:
         accessory_textures[k] = load("res://art/integrated/accessories/%s.png" % k)
     for k in ["play", "daily", "event", "goals"]:
         menu_cards[k] = load("res://art/integrated/ui/card_%s.png" % k)
+    
+    # Load Kenney particle pack textures
+    _load_kenney_particles()
+    
+    # Load Kenney UI sounds
+    _load_kenney_ui_sounds()
+    
     rng.randomize()
     _make_audio()
     _backup_previous_native_save()
@@ -184,6 +202,62 @@ func _ready() -> void:
         _new_game(false)
         screen = "home"
     queue_redraw()
+
+func _load_kenney_particles() -> void:
+    # Load particle textures from Kenney Particle Pack (PNG/Transparent)
+    var particle_names := [
+        "circle_01", "circle_02", "circle_03", "circle_04", "circle_05",
+        "flare_01", "flare_02", "flare_03",
+        "spark_01", "spark_02", "spark_03", "spark_04", "spark_05", "spark_06", "spark_07",
+        "star_01", "star_02", "star_03", "star_04", "star_05", "star_06", "star_07", "star_08", "star_09",
+        "magic_01", "magic_02", "magic_03", "magic_04", "magic_05",
+        "light_01", "light_02", "light_03",
+        "fire_01", "fire_02",
+        "flame_01", "flame_02", "flame_03", "flame_04", "flame_05", "flame_06",
+        "smoke_01", "smoke_02", "smoke_03", "smoke_04", "smoke_05", "smoke_06", "smoke_07", "smoke_08", "smoke_09", "smoke_10",
+        "twirl_01", "twirl_02", "twirl_03",
+        "trace_01", "trace_02", "trace_03", "trace_04", "trace_05", "trace_06", "trace_07"
+    ]
+    for name in particle_names:
+        var tex := load("res://art/kenney_particles/%s.png" % name) as Texture2D
+        if tex != null:
+            particle_textures.append(tex)
+    # Fallback: create simple circle particles if Kenney assets not available
+    if particle_textures.is_empty():
+        var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+        img.fill(Color(0, 0, 0, 0))
+        for x in range(32):
+            for y in range(32):
+                var dx := x - 16
+                var dy := y - 16
+                var dist := sqrt(float(dx * dx + dy * dy))
+                if dist <= 16:
+                    var alpha := 1.0 - dist / 16.0
+                    img.set_pixel(x, y, Color(1, 1, 1, alpha))
+        var tex := ImageTexture.create_from_image(img)
+        for i in range(8):
+            particle_textures.append(tex)
+
+func _load_kenney_ui_sounds() -> void:
+    # Load Kenney interface sounds (OGG format from interface sounds pack)
+    var ui_sound_names := [
+        "click_001", "click_002", "click_003", "click_004", "click_005",
+        "select_001", "select_002", "select_003", "select_004", "select_005", "select_006", "select_007", "select_008",
+        "confirmation_001", "confirmation_002", "confirmation_003", "confirmation_004",
+        "back_001", "back_002", "back_003", "back_004",
+        "open_001", "open_002", "open_003", "open_004",
+        "close_001", "close_002", "close_003", "close_004",
+        "error_001", "error_002", "error_003", "error_004", "error_005", "error_006", "error_007", "error_008",
+        "switch_001", "switch_002", "switch_003", "switch_004", "switch_005", "switch_006", "switch_007",
+        "toggle_001", "toggle_002", "toggle_003", "toggle_004",
+        "drop_001", "drop_002", "drop_003", "drop_004",
+        "pluck_001", "pluck_002",
+        "tick_001", "tick_002", "tick_004"
+    ]
+    for name in ui_sound_names:
+        var stream := load("res://audio/kenney_ui/%s.ogg" % name) as AudioStream
+        if stream != null:
+            kenney_ui_sounds[name] = stream
 
 func _backup_previous_native_save() -> void:
     # Preserve the previous native save as it was, before any migrated state is written.
@@ -242,6 +316,25 @@ func _play_sfx(name: String) -> void:
     player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - (13.0 if ui_cue else (10.0 if name in ["plop", "merge"] else 5.0))
     player.pitch_scale = rng.randf_range(0.97, 1.035) if name in ["merge", "ui_tap"] else 1.0
     player.play()
+
+func _play_kenney_ui(category: String) -> void:
+    # Play a random Kenney UI sound from the given category
+    if not sound_on or kenney_ui_sounds.is_empty():
+        return
+    var matching: Array = []
+    for k in kenney_ui_sounds:
+        if k.begins_with(category):
+            matching.append(k)
+    if matching.is_empty():
+        return
+    var chosen := matching[rng.randi_range(0, matching.size() - 1)]
+    var player := AudioStreamPlayer.new()
+    player.stream = kenney_ui_sounds[chosen]
+    player.volume_db = linear_to_db(maxf(0.02, sound_volume)) - 13.0
+    add_child(player)
+    player.play()
+    # Clean up after playing
+    callable(player.queue_free).call_deferred()
 
 func _today() -> String:
     var d := Time.get_date_dict_from_system()
@@ -709,6 +802,17 @@ func _merge_at(i: int, j: int) -> void:
     var first_discovery := tier > int(totals.get("biggest", 0))
     var old_rank := _factory_rank_index()
     var center := (Vector2(float(a.x), float(a.y)) + Vector2(float(b.x), float(b.y))) * 0.5
+    
+    # Add merge effect for squash/stretch animation
+    if not low_motion:
+        merge_effects.append({
+            "pos": center,
+            "tier": int(a.t),
+            "timer": MERGE_SQUASH_DURATION,
+            "scale": MERGE_SQUASH_SCALE,
+            "color": palette[clampi(int(a.t), 0, 9)]
+        })
+    
     blobs.remove_at(j)
     blobs.remove_at(i)
     if int(a.t) < 9:
@@ -777,7 +881,11 @@ func _spark_cloud(at: Vector2, tint: Color, count: int) -> void:
     for i in range(count):
         var ang := rng.randf_range(0, TAU)
         var speed := rng.randf_range(50.0, 270.0)
-        visual_sparks.append({"x": at.x, "y": at.y, "vx": cos(ang) * speed, "vy": sin(ang) * speed, "t": rng.randf_range(0.36, 0.85), "max": 0.85, "c": tint, "r": rng.randf_range(2.5, 6.0)})
+        var use_kenney := not particle_textures.is_empty() and rng.randf() < 0.7
+        var tex: Texture2D = null
+        if use_kenney:
+            tex = particle_textures[rng.randi_range(0, particle_textures.size() - 1)]
+        visual_sparks.append({"x": at.x, "y": at.y, "vx": cos(ang) * speed, "vy": sin(ang) * speed, "t": rng.randf_range(0.36, 0.85), "max": 0.85, "c": tint, "r": rng.randf_range(2.5, 6.0), "tex": tex})
     while visual_sparks.size() > MAX_PARTICLES:
         visual_sparks.pop_front()
 
@@ -832,6 +940,15 @@ func _boom() -> void:
 func _physics_process(delta: float) -> void:
     elapsed += delta
     combo_timer = maxf(0.0, combo_timer - delta)
+    
+    # Hold-to-drop timer
+    if aiming and hold_drop_count > 0:
+        hold_drop_timer += delta
+        if hold_drop_timer >= HOLD_DROP_COOLDOWN and hold_drop_count < MAX_HOLD_DROPS:
+            hold_drop_timer = 0.0
+            _drop(aim_x)
+            hold_drop_count += 1
+    
     for i in range(ui_tap_rings.size() - 1, -1, -1):
         ui_tap_rings[i]["age"] = float(ui_tap_rings[i]["age"]) + delta
         if float(ui_tap_rings[i]["age"]) > 0.30:
@@ -852,6 +969,14 @@ func _physics_process(delta: float) -> void:
     popup_scale = maxf(0.0, popup_scale - delta * 1.5)
     boom_pulse = maxf(0.0, boom_pulse - delta * 1.9)
     shake_amount = maxf(0.0, shake_amount - delta * 38.0)
+    
+    # Update merge effects (squash/stretch animations)
+    for i in range(merge_effects.size() - 1, -1, -1):
+        var eff: Dictionary = merge_effects[i]
+        eff["timer"] = float(eff["timer"]) - delta
+        if float(eff["timer"]) <= 0.0:
+            merge_effects.remove_at(i)
+    
     if Engine.get_physics_frames() % 180 == 0:
         _ensure_current_day()
         _ensure_weekly()
@@ -928,11 +1053,13 @@ func _physics_process(delta: float) -> void:
             var distance := maxf(0.01, sqrt(d2))
             var nx := dx / distance
             var ny := dy / distance
-            var separation := (minimum - distance) * 0.51
-            a.x = float(a.x) - nx * separation
-            a.y = float(a.y) - ny * separation
-            b.x = float(b.x) + nx * separation
-            b.y = float(b.y) + ny * separation
+            # Improved separation with minimum movement to prevent jittering
+            var separation := (minimum - distance) * 0.5
+            if separation > 0.5:  # Only apply significant separation
+                a.x = float(a.x) - nx * separation
+                a.y = float(a.y) - ny * separation
+                b.x = float(b.x) + nx * separation
+                b.y = float(b.y) + ny * separation
             var rv := (float(b.vx) - float(a.vx)) * nx + (float(b.vy) - float(a.vy)) * ny
             if rv < 0:
                 var impulse := -rv * 0.31
@@ -1252,6 +1379,8 @@ func _draw() -> void:
         _draw_gameover()
     elif screen == "help":
         _draw_help()
+    elif screen == "credits":
+        _draw_credits()
     # A subtle acknowledgement of successful finger taps, drawn above the UI.
     if not low_power and not low_motion:
         for ring in ui_tap_rings:
@@ -1277,9 +1406,10 @@ func _draw_home() -> void:
     _button(Rect2(368,904,307,76),"collection","COLLECTION",Color("3d6490"),Color.WHITE,26)
     _button(Rect2(45,996,306,75),"settings","SETTINGS",Color("354c77"),Color.WHITE,25)
     _button(Rect2(368,996,307,75),"help","HOW TO PLAY",Color("426c82"),Color.WHITE,25)
-    _label("RANK: %s • CHAIN x%d" % [_factory_rank_label(),top_chain],360,1132,23,Color("ccffa3"))
-    _label("EARN YOUR COSMETICS  •  NO ADS  •  OFFLINE",360,1198,18,Color("bdd2e9"))
-    _label("v0.9 ASSET INTEGRATION PLAYTEST",360,1250,15,Color("9daacc"))
+    _button(Rect2(45,1088,630,75),"credits","CREDITS",Color("4a5d8a"),Color.WHITE,25)
+    _label("RANK: %s • CHAIN x%d" % [_factory_rank_label(),top_chain],360,1192,23,Color("ccffa3"))
+    _label("EARN YOUR COSMETICS  •  NO ADS  •  OFFLINE",360,1248,18,Color("bdd2e9"))
+    _label("v1.0 ANDROID RELEASE",360,1298,15,Color("9daacc"))
 
 func _draw_factory_rails() -> void:
     # Four small cropped textures: they sit UNDER the moving sprites, so the factory
@@ -1336,10 +1466,29 @@ func _draw_game() -> void:
         var p := Vector2(float(v.x), float(v.y))
         var rad := float(v.r)
         var alpha := clampf(float(v.t)/float(v.max),0,1)
-        if rad > 4.0 and not low_power:
-            draw_line(p - Vector2(rad * 1.35, 0), p + Vector2(rad * 1.35, 0), Color(c.r,c.g,c.b,alpha * 0.85),1.7)
-            draw_line(p - Vector2(0,rad * 1.35), p + Vector2(0,rad * 1.35), Color(c.r,c.g,c.b,alpha * 0.85),1.7)
-        draw_circle(p,rad * 0.72,Color(c.r,c.g,c.b,alpha))
+        var tex: Texture2D = v.get("tex", null)
+        if tex != null:
+            var size := rad * 2.5
+            draw_texture_rect(tex, Rect2(p - Vector2(size, size) * 0.5, Vector2(size, size)), false, Color(c.r, c.g, c.b, alpha))
+        else:
+            if rad > 4.0 and not low_power:
+                draw_line(p - Vector2(rad * 1.35, 0), p + Vector2(rad * 1.35, 0), Color(c.r,c.g,c.b,alpha * 0.85),1.7)
+                draw_line(p - Vector2(0,rad * 1.35), p + Vector2(0,rad * 1.35), Color(c.r,c.g,c.b,alpha * 0.85),1.7)
+            draw_circle(p,rad * 0.72,Color(c.r,c.g,c.b,alpha))
+    
+    # Render merge effects (squash/stretch animation)
+    if not low_motion:
+        for eff in merge_effects:
+            var progress := 1.0 - float(eff["timer"]) / MERGE_SQUASH_DURATION
+            var scale_factor := lerp(1.0, eff["scale"], sin(progress * PI))
+            var radius := RADII[int(eff["tier"])] * scale_factor
+            var alpha := 1.0 - progress
+            var c: Color = eff["color"]
+            draw_circle(eff["pos"], radius, Color(c.r, c.g, c.b, alpha * 0.6))
+            # Add a bright flash at peak
+            if progress > 0.4 and progress < 0.6:
+                draw_circle(eff["pos"], radius * 1.3, Color(1, 1, 1, (1.0 - abs(progress - 0.5) * 4.0) * 0.4))
+    
     for burst in bursts:
         var life := float(burst.life)
         var c: Color = burst.color
@@ -1416,6 +1565,35 @@ func _draw_help() -> void:
     _label("EARN TICKETS  •  UNLOCK YOUR FACTORY",360,1014,19,Color("d0ffae"))
     _label("DAILY, WEEKLY & OCTOBER EVENTS AWAIT",360,1048,17,Color("d0eaff"))
     _button(Rect2(95,1094,531,83),"back","GOT IT — LET'S PLOP!",Color("a8ed73"),Color("163139"),28)
+
+func _draw_credits() -> void:
+    _menu_frame("CREDITS", "Made with love and free assets.")
+    _panel(Rect2(74,321,573,180),Color("263b61"))
+    _label("PLOPQUAKE DEVELOPMENT",360,370,26,Color("ffe69b"))
+    _label("Game design, code & art direction",360,410,18,Color("d0e4ff"))
+    _label("by the PLOPQUAKE Team",360,438,18,Color("d0e4ff"))
+    
+    _panel(Rect2(74,521,573,280),Color("263b61"))
+    _label("THIRD-PARTY ASSETS (CC0 / CC BY 4.0)",360,565,22,Color("ffe69b"))
+    _label("UI Soundpack — Nathan Gibson (CC BY 4.0)",360,605,17,Color("c4d8f0"))
+    _label("Green Action Panels — Wenrexa (CC0)",360,630,17,Color("c4d8f0"))
+    _label("UI Pack — Kenney (CC0)",360,655,17,Color("c4d8f0"))
+    _label("Game Icons — Kenney (CC0)",360,680,17,Color("c4d8f0"))
+    _label("Impact Sounds — Kenney (CC0)",360,705,17,Color("c4d8f0"))
+    _label("Interface Sounds — Kenney (CC0)",360,730,17,Color("c4d8f0"))
+    _label("Music Jingles — Kenney (CC0)",360,755,17,Color("c4d8f0"))
+    _label("Particle Pack — Kenney (CC0)",360,780,17,Color("c4d8f0"))
+    _label("Slime Pack — Rick Hoppmann (CC0)",360,805,17,Color("c4d8f0"))
+    
+    _panel(Rect2(74,821,573,150),Color("263b61"))
+    _label("ENGINE & TOOLS",360,865,22,Color("ffe69b"))
+    _label("Godot Engine 4.7.2 — MIT License",360,905,17,Color("c4d8f0"))
+    _label("GDScript — Built-in",360,930,17,Color("c4d8f0"))
+    
+    _panel(Rect2(74,991,573,80),Color("304267"))
+    _label("NO ADS • NO TRACKING • OFFLINE FIRST",360,1024,18,Color("d0ffae"))
+    _label("Thank you for playing!",360,1052,17,Color("d0eaff"))
+    _button(Rect2(95,1094,531,83),"back","BACK",Color("a8ed73"),Color("163139"),28)
 
 func _draw_settings() -> void:
     _menu_frame("SETTINGS", "Comfortable on big and small screens.")
@@ -1665,6 +1843,9 @@ func _touch_down(pos: Vector2, pointer_id: int) -> void:
     if screen == "game" and pos.x >= LEFT and pos.x <= RIGHT and pos.y >= TOP and pos.y <= FLOOR:
         aiming = true
         aim_x = clampf(pos.x, LEFT + 27, RIGHT - 27)
+        # Initialize hold-to-drop
+        hold_drop_timer = 0.0
+        hold_drop_count = 0
 
 func _touch_up(pos: Vector2, pointer_id: int) -> void:
     if active_pointer != pointer_id:
@@ -1683,20 +1864,26 @@ func _touch_up(pos: Vector2, pointer_id: int) -> void:
         return
     if aiming:
         aiming = false
+        hold_drop_timer = 0.0
+        hold_drop_count = 0
         if pos.x >= LEFT and pos.x <= RIGHT and pos.y >= TOP - 15 and pos.y <= FLOOR + 18:
             _drop(clampf(pos.x, LEFT + 27, RIGHT - 27))
 
 func _activate(id: String) -> void:
     if id in ["back", "pause", "home"]:
         _play_sfx("ui_back")
+        _play_kenney_ui("back")
     elif id in ["normal", "daily", "retry", "resume", "locker", "settings", "events", "collection", "goals", "help"]:
         _play_sfx("ui_open")
+        _play_kenney_ui("open")
     elif id == "boom":
         pass  # BOOM plays its own sound once it is legitimately activated.
     elif id.begins_with("tab:") or id.begins_with("goaltab:") or id in ["audio", "visual", "data", "next_shop"]:
         _play_sfx("ui_switch")
+        _play_kenney_ui("switch")
     else:
         _play_sfx("ui_tap")
+        _play_kenney_ui("click")
     if id == "normal" or id == "daily":
         _change_mode(id)
     elif id == "resume":
@@ -1725,7 +1912,7 @@ func _activate(id: String) -> void:
     elif id == "back":
         restore_armed = false
         screen = back_screen if back_screen in ["home", "pause", "game"] else "pause"
-    elif id in ["collection", "settings", "locker", "events", "goals", "help"]:
+    elif id in ["collection", "settings", "locker", "events", "goals", "help", "credits"]:
         if id == "help":
             first_help_seen = true
         back_screen = screen

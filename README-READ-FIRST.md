@@ -1,23 +1,29 @@
-# PLOPQUAKE! v0.9 — Curated Godot UI Integration
+# PLOPQUAKE! v1.0 — Android Release
 
-This is the **actual native Godot game project**, based on v0.8. It is not a mockup, a standalone art pack, a precompiled APK, or the older HTML game.
+This is the **actual native Godot game project**, based on v0.9. It is not a mockup, a standalone art pack, a precompiled APK, or the older HTML game.
 
 The original score/merge/BOOM rules, Daily/Normal progression, event system, native save identifier, project/package identity and accessibility options are preserved.
 
-## Main changes
-- Six soft, user-supplied UI sounds added from Nathan Gibson's CC BY 4.0 pack. Menu navigation, errors, buttons and confirmation cues invoke them.
-- Wenrexa's CC0 green panels style real green action buttons, with separate press-state image.
-- Existing neon factory panel art now uses 9-slice rendering on other large buttons, so graphics scale without stretched corners.
-- Touch-release feedback rings; locked rewards explain why they're not yet available.
-- Startup only loads the final illustrated blob images, falling back to old images only if necessary.
-- Idle menus redraw at 30 FPS (or 15 FPS with battery saver) for mobile battery/performance.
-- Android `package/unique_name` and `user://plopquake_native_v1.json` unchanged.
+## Main changes from v0.9
+- **Hold-to-drop**: Hold and drag in the play area to rapidly drop blobs with a sensible cooldown (0.18s, max 8 drops).
+- **Merge squash/stretch animation**: Satisfying visual feedback when blobs merge.
+- **Kenney Particle Pack integration**: Merge effects now use high-quality particle textures (circles, sparks, stars, magic, fire, smoke, twirls, traces).
+- **Kenney UI Sounds integration**: Additional UI sounds for click, select, confirmation, back, open, close, error, switch, toggle, drop, pluck, tick.
+- **Kenney Music Jingles**: 8-bit jingles available for victory, merge milestones, and rewards.
+- **Kenney Impact Sounds**: Available for blob collisions, landings, drops, and BOOM effects.
+- **Kenney UI Pack**: Professional button backgrounds, panels, and UI components.
+- **Kenney Game Icons**: Available for booster icons, rewards, collection symbols, achievements.
+- **Credits screen**: Accessible from main menu, lists all third-party assets and licenses.
+- **Improved physics**: Better collision separation to prevent jittering and stuck blobs.
+- **Enhanced visual feedback**: Merge effects, chain reactions, and BOOM feel more impactful.
+- **Version bump**: v1.0.0 (version code 10) for Android release.
 
 ## Import to Godot Android
 1. On the previous build use Settings → Data → Copy Save; paste that save in a note and keep the previous project.
-2. Godot → Projects → Import → select the v0.9 ZIP in Downloads. Install in a separate folder.
+2. Godot → Projects → Import → select the v1.0 project folder. Install in a separate folder.
 3. Open the project and press ▶ Run.
-4. Test a merge, BOOM, Pause, Daily mode, Events, rewards, Locker, Settings/Sounds and a save/restore.
+4. Test a merge, BOOM, Pause, Daily mode, Events, rewards, Locker, Settings/Sounds, Credits and a save/restore.
+5. Export for Android: Project → Export → Android → Export Project.
 
 All third-party author/licence information is in `THIRD_PARTY_CREDITS.md`. Do not distribute unused source packs.
 
