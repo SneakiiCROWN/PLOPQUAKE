@@ -897,6 +897,10 @@ func _drop(x: float) -> void:
     _play_sfx("plop")
     _haptic(12)
     _save_all()
+    
+    # Reset perfect drop window
+    perfect_drop_window = false
+    perfect_drop_timer = 0.0
 
 func _merge_at(i: int, j: int) -> void:
     if i >= blobs.size() or j >= blobs.size():
@@ -910,20 +914,42 @@ func _merge_at(i: int, j: int) -> void:
     var old_rank := _factory_rank_index()
     var center := (Vector2(float(a.x), float(a.y)) + Vector2(float(b.x), float(b.y))) * 0.5
     
-    # Add merge effect for squash/stretch animation
+    # Enhanced merge effect with multiple stages
     if not low_motion:
+        # Main squash effect
         merge_effects.append({
             "pos": center,
             "tier": int(a.t),
             "timer": MERGE_SQUASH_DURATION,
             "scale": MERGE_SQUASH_SCALE,
-            "color": palette[clampi(int(a.t), 0, 9)]
+            "color": palette[clampi(int(a.t), 0, 9)],
+            "stage": 0
         })
+        # Secondary expansion ring
+        merge_effects.append({
+            "pos": center,
+            "tier": int(a.t),
+            "timer": MERGE_SQUASH_DURATION * 1.5,
+            "scale": 1.4,
+            "color": palette[clampi(int(a.t), 0, 9)],
+            "stage": 1
+        })
+        # Add screen shake based on tier
+        shake_amount += lerp(2.0, 8.0, float(tier) / 9.0) * (1.0 if not low_motion else 0.3)
+        # Combo popup
+        combo_popup_scale = 1.0
+        combo_popup_text = "MERGE!"
+        if combo_count > 1:
+            combo_popup_text = "x%d COMBO!" % (combo_count + 1)
     
     blobs.remove_at(j)
     blobs.remove_at(i)
     if int(a.t) < 9:
+        # Spawn new blob with upward momentum for satisfying pop
         _spawn_blob(tier, center)
+        var new_blob := blobs[blobs.size() - 1]
+        new_blob.vy = -200.0 - float(tier) * 30.0
+        new_blob.vx = (rng.randf() - 0.5) * 100.0
     else:
         # Highest tier resets into two young blobs, to keep the game endless.
         _spawn_blob(1, center + Vector2(-20, 0))
@@ -936,11 +962,11 @@ func _merge_at(i: int, j: int) -> void:
     biggest = maxi(biggest, tier)
     merges += 1
     combo_count = combo_count + 1 if combo_timer > 0.0 else 1
-    combo_timer = 1.1
+    combo_timer = COMBO_WINDOW
     top_chain = maxi(top_chain, combo_count)
     totals["merges"] = int(totals.get("merges", 0)) + 1
     totals["biggest"] = maxi(int(totals.get("biggest", 0)), tier)
-    charge = minf(100.0, charge + 11.0 + float(tier) * 2.0)
+    charge = minf(100.0, charge + BASE_BOOM_CHARGE + float(tier) * BOOM_CHARGE_PER_TIER)
     mission_progress += 1
     quest_stats[0] = int(quest_stats[0]) + 1
     weekly_stats[0] = int(weekly_stats[0]) + 1
@@ -953,23 +979,24 @@ func _merge_at(i: int, j: int) -> void:
         ghoul_stats[3] = maxi(int(ghoul_stats[3]), score)
     tickets += 1 if tier < 4 else 3
     _burst(center, "+%d  %s!" % [points, NAMES[tier]], palette[tier])
-    if combo_count >= 3 and combo_count % 3 == 0:
-        _burst(center + Vector2(0,-44), "CHAIN x%d" % combo_count, Color("ffda7b"))
-    _spark_cloud(center, palette[tier], 8 + mini(17, tier * 2))
+    if combo_count >= 3:
+        _burst(center + Vector2(0,-50), "x%d COMBO!" % combo_count, Color("ffda7b"))
+    # Enhanced particle burst
+    _spark_cloud(center, palette[tier], 12 + mini(20, tier * 3))
     if tier >= 3:
         _shockwave(center, palette[tier], tier)
     if int(score / 10000) > score_milestone:
         score_milestone = int(score / 10000)
-        _burst(center + Vector2(0.0, -62.0), "SCORE MILESTONE!", Color("fff3ae"))
+        _burst(center + Vector2(0.0, -70.0), "SCORE MILESTONE!", Color("fff3ae"))
     if _factory_rank_index() > old_rank:
-        _burst(center + Vector2(0.0, -82.0), "FACTORY RANK UP!", Color("d6ffb4"))
+        _burst(center + Vector2(0.0, -90.0), "FACTORY RANK UP!", Color("d6ffb4"))
         notice = "NEW RANK: %s" % _factory_rank_label()
         notice_timer = 3.2
         _play_sfx("reward")
-    shake_amount = 3.5 if low_motion else minf(11.0, 3.5 + float(tier) * 0.8)
-    popup_scale = 0.18
+    shake_amount = lerp(4.0, 12.0, float(tier) / 9.0) if not low_motion else 0.0
+    popup_scale = 0.22
     _play_sfx("merge")
-    _haptic(22 if tier < 5 else 38)
+    _haptic(lerp(18, 45, float(tier) / 9.0))
     # Play jingle for significant merges
     if tier >= 3 or combo_count >= 3:
         _play_jingle(tier)
@@ -990,12 +1017,29 @@ func _spark_cloud(at: Vector2, tint: Color, count: int) -> void:
         count = maxi(3, count / 3)
     for i in range(count):
         var ang := rng.randf_range(0, TAU)
-        var speed := rng.randf_range(50.0, 270.0)
-        var use_kenney := not particle_textures.is_empty() and rng.randf() < 0.7
+        var speed := rng.randf_range(60.0, 320.0)
+        var use_kenney := not particle_textures.is_empty() and rng.randf() < 0.75
         var tex: Texture2D = null
         if use_kenney:
             tex = particle_textures[rng.randi_range(0, particle_textures.size() - 1)]
-        visual_sparks.append({"x": at.x, "y": at.y, "vx": cos(ang) * speed, "vy": sin(ang) * speed, "t": rng.randf_range(0.36, 0.85), "max": 0.85, "c": tint, "r": rng.randf_range(2.5, 6.0), "tex": tex})
+        visual_sparks.append({
+            "x": at.x, "y": at.y, 
+            "vx": cos(ang) * speed, "vy": sin(ang) * speed, 
+            "t": rng.randf_range(0.4, 1.0), "max": 1.0, 
+            "c": tint, "r": rng.randf_range(3.0, 8.0), "tex": tex,
+            "gravity": true
+        })
+    # Add directional burst particles for more impact
+    for i in range(mini(8, count / 2)):
+        var ang := rng.randf_range(0, TAU)
+        var speed := rng.randf_range(200.0, 450.0)
+        visual_sparks.append({
+            "x": at.x, "y": at.y, 
+            "vx": cos(ang) * speed, "vy": sin(ang) * speed, 
+            "t": rng.randf_range(0.2, 0.5), "max": 0.5, 
+            "c": Color(1, 1, 0.8), "r": rng.randf_range(4.0, 10.0), "tex": null,
+            "gravity": false
+        })
     while visual_sparks.size() > MAX_PARTICLES:
         visual_sparks.pop_front()
 
@@ -1092,6 +1136,14 @@ func _physics_process(delta: float) -> void:
         if float(eff["timer"]) <= 0.0:
             merge_effects.remove_at(i)
     
+    # Update combo popup
+    combo_popup_scale = maxf(0.0, combo_popup_scale - delta * 3.0)
+    
+    # Update perfect drop timer
+    perfect_drop_timer = maxf(0.0, perfect_drop_timer - delta)
+    if perfect_drop_timer <= 0.0:
+        perfect_drop_window = false
+    
     if Engine.get_physics_frames() % 180 == 0:
         _ensure_current_day()
         _ensure_weekly()
@@ -1111,7 +1163,8 @@ func _physics_process(delta: float) -> void:
         v["t"] = float(v.t) - delta
         v["x"] = float(v.x) + float(v.vx) * delta
         v["y"] = float(v.y) + float(v.vy) * delta
-        v["vy"] = float(v.vy) + 350.0 * delta
+        if bool(v.get("gravity", true)):
+            v["vy"] = float(v.vy) + 350.0 * delta
         if float(v.t) <= 0.0:
             visual_sparks.remove_at(i)
     if notice_timer > 0.0:
@@ -1131,26 +1184,47 @@ func _physics_process(delta: float) -> void:
         _ensure_current_day()
     var dt := minf(delta, 0.035)
     for b in blobs:
-        var r: float = RADII[int(b.t)]
+        var tier: int = int(b.t)
+        var r: float = RADII[tier]
+        var mass: float = pow(1.35, float(tier))  # Higher tier = heavier
         b.age = float(b.age) + dt
-        b.vy = minf(1500.0, float(b.vy) + 1650.0 * dt)
+        
+        # Gravity with terminal velocity based on mass/size
+        var terminal_velocity: float = 800.0 + float(tier) * 60.0
+        b.vy = minf(terminal_velocity, float(b.vy) + 1400.0 * dt)
+        
         b.x = float(b.x) + float(b.vx) * dt
         b.y = float(b.y) + float(b.vy) * dt
-        b.vx = float(b.vx) * 0.994
+        
+        # Air resistance - lighter blobs slow down more horizontally
+        var air_drag: float = 0.996 - float(tier) * 0.001
+        b.vx = float(b.vx) * air_drag
+        
+        # Wall collisions with energy preservation
         if float(b.x) < LEFT + r:
             b.x = LEFT + r
-            b.vx = absf(float(b.vx)) * 0.26
+            b.vx = absf(float(b.vx)) * lerp(0.35, 0.55, float(tier) / 9.0)
         elif float(b.x) > RIGHT - r:
             b.x = RIGHT - r
-            b.vx = -absf(float(b.vx)) * 0.26
-        # Play impact sound when blob hits floor (first time or significant bounce)
+            b.vx = -absf(float(b.vx)) * lerp(0.35, 0.55, float(tier) / 9.0)
+        
+        # Floor collision with realistic bounce
         if float(b.y) > FLOOR - r:
-            if not b.has("landed") or absf(float(b.vy)) > 200.0:
+            if not b.has("landed") or absf(float(b.vy)) > 180.0:
                 b.landed = true
-                _play_impact(int(b.t))
+                _play_impact(tier)
             b.y = FLOOR - r
-            b.vy = -absf(float(b.vy)) * 0.12
-            b.vx = float(b.vx) * 0.94
+            
+            # Bounce coefficient based on tier (heavier = less bounce)
+            var bounce: float = lerp(0.35, 0.15, float(tier) / 9.0)
+            if absf(float(b.vy)) > 100.0:
+                b.vy = -absf(float(b.vy)) * bounce
+                # Horizontal friction on bounce
+                b.vx = float(b.vx) * 0.88
+            else:
+                # Settling - stop tiny bounces
+                b.vy = 0.0
+                b.vx = float(b.vx) * 0.96
     var merge_i := -1
     var merge_j := -1
     for i in range(blobs.size()):
@@ -1172,20 +1246,26 @@ func _physics_process(delta: float) -> void:
             var distance := maxf(0.01, sqrt(d2))
             var nx := dx / distance
             var ny := dy / distance
-            # Improved separation with minimum movement to prevent jittering
-            var separation := (minimum - distance) * 0.5
-            if separation > 0.5:  # Only apply significant separation
-                a.x = float(a.x) - nx * separation
-                a.y = float(a.y) - ny * separation
-                b.x = float(b.x) + nx * separation
-                b.y = float(b.y) + ny * separation
+            # Proportional separation with mass weighting
+            var separation := (minimum - distance) * 0.52
+            if separation > 0.3:
+                var mass_a: float = pow(1.35, float(int(a.t)))
+                var mass_b: float = pow(1.35, float(int(b.t)))
+                var total_mass: float = mass_a + mass_b
+                a.x = float(a.x) - nx * separation * (mass_b / total_mass)
+                a.y = float(a.y) - ny * separation * (mass_b / total_mass)
+                b.x = float(b.x) + nx * separation * (mass_a / total_mass)
+                b.y = float(b.y) + ny * separation * (mass_a / total_mass)
+            # Elastic collision response with mass
             var rv := (float(b.vx) - float(a.vx)) * nx + (float(b.vy) - float(a.vy)) * ny
             if rv < 0:
-                var impulse := -rv * 0.31
-                a.vx = float(a.vx) - nx * impulse
-                a.vy = float(a.vy) - ny * impulse
-                b.vx = float(b.vx) + nx * impulse
-                b.vy = float(b.vy) + ny * impulse
+                var mass_a: float = pow(1.35, float(int(a.t)))
+                var mass_b: float = pow(1.35, float(int(b.t)))
+                var impulse: float = -(1.0 + 0.15) * rv / (1.0 / mass_a + 1.0 / mass_b)
+                a.vx = float(a.vx) - nx * impulse / mass_a
+                a.vy = float(a.vy) - ny * impulse / mass_a
+                b.vx = float(b.vx) + nx * impulse / mass_b
+                b.vy = float(b.vy) + ny * impulse / mass_b
         if merge_i >= 0:
             break
     if merge_i >= 0:
@@ -1210,7 +1290,12 @@ func _ui_transform() -> void:
     var viewport_size := get_viewport_rect().size
     draw_scale = minf(viewport_size.x / WIDTH, viewport_size.y / HEIGHT)
     draw_origin = (viewport_size - Vector2(WIDTH, HEIGHT) * draw_scale) * 0.5
-    draw_set_transform(draw_origin, 0.0, Vector2(draw_scale, draw_scale))
+    # Apply screen shake
+    if shake_amount > 0.5 and not low_motion:
+        screen_shake_offset = Vector2(rng.randf_range(-shake_amount, shake_amount), rng.randf_range(-shake_amount, shake_amount))
+    else:
+        screen_shake_offset = Vector2.ZERO
+    draw_set_transform(draw_origin + screen_shake_offset, 0.0, Vector2(draw_scale, draw_scale))
 
 func _panel(r: Rect2, color: Color, border: Color = Color(0.30,0.40,0.56,0.95), radius: float = 18.0) -> void:
     _filled_round(Rect2(r.position + Vector2(0, 7), r.size), Color(0.01, 0.02, 0.08, 0.43), radius)
@@ -1607,18 +1692,29 @@ func _draw_game() -> void:
                 draw_line(p - Vector2(0,rad * 1.35), p + Vector2(0,rad * 1.35), Color(c.r,c.g,c.b,alpha * 0.85),1.7)
             draw_circle(p,rad * 0.72,Color(c.r,c.g,c.b,alpha))
     
-    # Render merge effects (squash/stretch animation)
+    # Render merge effects (squash/stretch animation + expansion rings)
     if not low_motion:
         for eff in merge_effects:
-            var progress := 1.0 - float(eff["timer"]) / MERGE_SQUASH_DURATION
-            var scale_factor: float = lerp(1.0, float(eff["scale"]), sin(progress * PI))
-            var radius: float = RADII[int(eff["tier"])] * scale_factor
-            var alpha: float = 1.0 - progress
+            var max_duration := MERGE_SQUASH_DURATION if int(eff["stage"]) == 0 else MERGE_SQUASH_DURATION * 1.5
+            var progress := 1.0 - float(eff["timer"]) / max_duration
+            var stage: int = int(eff["stage"])
             var c: Color = eff["color"]
-            draw_circle(eff["pos"], radius, Color(c.r, c.g, c.b, alpha * 0.6))
-            # Add a bright flash at peak
-            if progress > 0.4 and progress < 0.6:
-                draw_circle(eff["pos"], radius * 1.3, Color(1, 1, 1, (1.0 - abs(progress - 0.5) * 4.0) * 0.4))
+            
+            if stage == 0:
+                # Stage 0: Squash/stretch
+                var scale_factor: float = lerp(1.0, float(eff["scale"]), sin(progress * PI))
+                var radius: float = RADII[int(eff["tier"])] * scale_factor
+                var alpha: float = 1.0 - progress
+                draw_circle(eff["pos"], radius, Color(c.r, c.g, c.b, alpha * 0.6))
+                # Add a bright flash at peak
+                if progress > 0.4 and progress < 0.6:
+                    draw_circle(eff["pos"], radius * 1.3, Color(1, 1, 1, (1.0 - abs(progress - 0.5) * 4.0) * 0.4))
+            else:
+                # Stage 1: Expansion ring
+                var radius: float = RADII[int(eff["tier"])] * lerp(1.0, float(eff["scale"]), progress)
+                var alpha: float = (1.0 - progress) * 0.5
+                var thickness: float = maxf(2.0, RADII[int(eff["tier"])] * 0.08 * (1.0 - progress))
+                draw_arc(eff["pos"], radius, 0.0, TAU, 32, Color(c.r, c.g, c.b, alpha), thickness, true)
     
     for burst in bursts:
         var life := float(burst.life)
@@ -1653,6 +1749,19 @@ func _draw_game() -> void:
     _label("DRAG TO AIM  •  RELEASE TO DROP",360,1254,18,Color("c1d8ef"))
     if combo_timer > 0.0 and combo_count >= 3:
         _label("x%d CHAIN!" % combo_count,360,274,23,Color("ffe69b"))
+    
+    # Render combo popup
+    if combo_popup_scale > 0.05 and not low_motion:
+        var scale: float = combo_popup_scale
+        var alpha: float = clampf(combo_popup_scale * 2.0, 0.0, 1.0)
+        _label(combo_popup_text, 360, 340, int(40 * scale), Color(1, 0.95, 0.6, alpha), 500)
+    
+    # Render perfect drop indicator
+    if perfect_drop_window and not low_motion:
+        var alpha: float = perfect_drop_timer / 0.6
+        draw_circle(Vector2(aim_x, TOP + 40), 12.0 + 8.0 * (1.0 - alpha), Color(1, 0.9, 0.4, alpha * 0.6))
+        draw_circle(Vector2(aim_x, TOP + 40), 18.0 + 12.0 * (1.0 - alpha), Color(1, 1, 0.6, alpha * 0.3))
+        _label("PERFECT!", aim_x, TOP + 60, int(24 * alpha), Color(1, 0.95, 0.4, alpha), 200)
 
 func _draw_pause() -> void:
     _menu_frame("PAUSED", "Take a break. Your pile waits for you.")
@@ -1999,7 +2108,18 @@ func _touch_up(pos: Vector2, pointer_id: int) -> void:
         hold_drop_timer = 0.0
         hold_drop_count = 0
         if pos.x >= LEFT and pos.x <= RIGHT and pos.y >= TOP - 15 and pos.y <= FLOOR + 18:
-            _drop(clampf(pos.x, LEFT + 27, RIGHT - 27))
+            var drop_x := clampf(pos.x, LEFT + 27, RIGHT - 27)
+            # Perfect drop detection - if released near the aim line
+            var aim_diff := absf(drop_x - aim_x)
+            if aim_diff < 8.0:
+                perfect_drop_window = true
+                perfect_drop_timer = 0.6
+                _play_sfx("ui_confirm")
+                _haptic(8)
+                if not low_motion:
+                    combo_popup_scale = 0.8
+                    combo_popup_text = "PERFECT DROP!"
+            _drop(drop_x)
 
 func _activate(id: String) -> void:
     if id in ["back", "pause", "home"]:
