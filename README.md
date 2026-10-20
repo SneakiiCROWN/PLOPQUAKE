@@ -1,33 +1,43 @@
-# PLOPQUAKE! 💥
+# PLOPQUAKE!
 
-A colourful, portrait-mode blob-merging game for Android. Drop blobs, combine matching ones, build combos and go for that satisfying **BOOM**.
+Drop blobs, merge matching ones and work your way up to a big BOOM. A colourful portrait-mode game made for Android.
 
-## Want to play?
+**Current version: Android friend-test APK.** You can install it without Godot, but this exact build still needs real-phone gameplay testing.
 
-Check [Releases](https://github.com/SneakiiCROWN/PLOPQUAKE/releases) for an Android **APK**.
+## Download and play
 
-**Android friend-test APK available:** [Download PLOPQUAKE-Android-Friend-Test.apk](https://github.com/SneakiiCROWN/PLOPQUAKE/releases/download/plopquake-test-3/PLOPQUAKE-Android-Friend-Test.apk). It is a separate test app so it won't overwrite the usual PLOPQUAKE app or saves. Real phone gameplay still needs testing. **Code → Download ZIP** contains the Godot source, not an APK.
+1. On your **Android phone**, [download the test APK](https://github.com/SneakiiCROWN/PLOPQUAKE/releases/download/plopquake-test-3/PLOPQUAKE-Android-Friend-Test.apk).
+2. Open the downloaded file from your browser or Downloads app.
+3. Tap **Install**. Android may ask you to allow installs from that particular app; only do this if you trust this download.
+4. Open **PLOPQUAKE!** and play.
 
-When a tested APK is available: download it to your Android phone and follow the install prompts. Only install APKs from a trusted source, and keep a backup of your progress before testing an experimental build.
+No PC, Godot or coding tools are needed for the APK. **Code → Download ZIP** is source code, not the game.
 
-## How it plays
+This is installed as a **separate friend-test app**, so it should not replace your main PLOPQUAKE installation or saves. Test APKs use temporary signing keys: future test updates might require uninstalling the earlier test version, which deletes that test version's local saves.
+
+## How to play
 
 - Tap or hold in the play area to drop blobs.
-- Merge matching blobs to reach bigger tiers.
+- Merge matching blobs into bigger ones.
 - Build combos and trigger BOOMs.
-- Explore Normal/Daily modes, the collection and settings.
+- Check out Normal/Daily modes, the collection and settings.
 
-Some features and audio are still being polished. Found a bug? Tell me your phone model and what you did just before it happened.
+## What's working, and what's still being tested?
 
-## Want to open the project instead?
+- **Built successfully:** the Godot project imported and an installable Android APK was exported.
+- **Implemented in the project:** blob-dropping, merging, BOOMs, progression modes, saves and menus.
+- **Still needs phone testing:** controls, physics, music/sounds, save/restore, performance and how it looks on different screens.
 
-1. Install **Godot 4.7.x**.
-2. Download and extract the source ZIP (or clone the repository).
-3. Import the folder containing `project.godot` into Godot.
-4. Open it and press **Run**.
+An exported APK is **not** proof that every gameplay feature works on every phone. Please tell me if you find a bug.
 
-Exporting to Android requires the Godot export templates and Android SDK. This source repository does not include an installable APK.
+## What's coming next?
 
-More details: [README-READ-FIRST.md](README-READ-FIRST.md). Third-party credits: [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md).
+More blob and progression variety, power-up ideas, extra rewards and continued visual/audio polish. The longer plan is in [development notes](DEVELOPMENT_SUMMARY.md). Third-party credits are in [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md).
 
-**Status:** Active development. Phone testing is required for each APK release.
+## Found a bug?
+
+[Report it here](https://github.com/SneakiiCROWN/PLOPQUAKE/issues). Include your phone model, Android version and what happened.
+
+## For developers only
+
+Install **Godot 4.7.x**, download the repository source, import the folder containing `project.godot` and press **Run**. Android exports need the appropriate Godot export templates and Android SDK. More detail: [README-READ-FIRST.md](README-READ-FIRST.md).
