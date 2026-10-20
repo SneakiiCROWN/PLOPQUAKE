@@ -34,6 +34,12 @@ An exported APK is **not** proof that every gameplay feature works on every phon
 
 More blob and progression variety, power-up ideas, extra rewards and continued visual/audio polish. The longer plan is in [development notes](DEVELOPMENT_SUMMARY.md). Third-party credits are in [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md).
 
+## Known rough edges and updates
+
+No specific bug has been confirmed *in this exact test APK* yet. Android controls, sound, saving and phone performance still need hands-on checks, so expect some rough edges. New gameplay and presentation features are also still in development.
+
+**Updating:** grab the next test APK from [Releases](https://github.com/SneakiiCROWN/PLOPQUAKE/releases). These friend-test APKs may not install over each other because each build uses a temporary signing key. You may have to uninstall the *friend-test version* first, which loses that test app's saves. Your usual game installation is separate.
+
 ## Found a bug?
 
 [Report it here](https://github.com/SneakiiCROWN/PLOPQUAKE/issues). Include your phone model, Android version and what happened.
