@@ -6,7 +6,7 @@ A colourful, portrait-mode blob-merging game for Android. Drop blobs, combine ma
 
 Check [Releases](https://github.com/SneakiiCROWN/PLOPQUAKE/releases) for an Android **APK**.
 
-**There is no downloadable APK in Releases yet.** This repository contains the Godot game project. **Code → Download ZIP** is *not* a ready-to-install game.
+**Android friend-test APK available:** [Download PLOPQUAKE-Android-Friend-Test.apk](https://github.com/SneakiiCROWN/PLOPQUAKE/releases/download/plopquake-test-3/PLOPQUAKE-Android-Friend-Test.apk). It is a separate test app so it won't overwrite the usual PLOPQUAKE app or saves. Real phone gameplay still needs testing. **Code → Download ZIP** contains the Godot source, not an APK.
 
 When a tested APK is available: download it to your Android phone and follow the install prompts. Only install APKs from a trusted source, and keep a backup of your progress before testing an experimental build.
 
