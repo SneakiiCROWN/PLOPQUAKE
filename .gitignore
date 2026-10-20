@@ -193,3 +193,7 @@ gde_strs.po
 *.tar
 
 # --- End General ---
+.public-build/
+.godot/
+
+__pycache__/

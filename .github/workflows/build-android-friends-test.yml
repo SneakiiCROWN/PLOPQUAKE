@@ -1,120 +1,93 @@
-name: Build PLOPQUAKE Android friend-test APK
-
+name: Build current Windows and Android prerelease
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - .github/workflows/build-android-friends-test.yml
-
+    inputs:
+      version_code:
+        description: Increasing Android version code (keep package and signing identity)
+        required: true
+        default: '17'
+        type: string
+      release_tag:
+        description: Unique prerelease tag
+        required: true
+        type: string
+      publish:
+        description: Publish checked artifacts (native hardware checks remain separate)
+        default: false
+        type: boolean
 permissions:
   contents: write
-
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  build-android-debug:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          lfs: true
+          python-version: '3.12'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Prepare Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n1)"
-          if [ -z "$SDKMANAGER" ]; then echo "Android SDK command line tools missing"; exit 1; fi
-          echo "SDK manager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36'
-      - name: Install official Godot 4.7.2 editor and Android templates
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/godot.zip" "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
-          mkdir -p "$RUNNER_TEMP/godotbin"
-          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godotbin"
-          chmod +x "$RUNNER_TEMP/godotbin/Godot_v4.7.2-stable_linux.x86_64"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/templates.tpz" "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"
-          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-          unzip -jo "$RUNNER_TEMP/templates.tpz" "templates/android_debug.apk" "templates/android_release.apk" -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-      - name: Create temporary test signing key and editor setup (not committed)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.android" "$HOME/.config/godot"
-          keytool -genkeypair -noprompt -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 9999 -dname "CN=Android Debug,O=Android,C=US"
-          cat > "$HOME/.config/godot/editor_settings-4.7.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          export/android/debug_keystore = "$HOME/.android/debug.keystore"
-          export/android/debug_keystore_user = "androiddebugkey"
-          export/android/debug_keystore_pass = "android"
-          EOF
-          cat > export_presets.cfg <<'EOF'
-          [preset.0]
-
-          name="Android Friend Test"
-          platform="Android"
-          runnable=true
-          advanced_options=false
-          dedicated_server=false
-          custom_features=""
-          export_filter="all_resources"
-          include_filter=""
-          exclude_filter=""
-          export_path=""
-          encryption_include_filters=""
-          encryption_exclude_filters=""
-          encrypt_pck=false
-          encrypt_directory=false
-          script_export_mode=2
-
-          [preset.0.options]
-
-          custom_template/debug=""
-          custom_template/release=""
-          gradle_build/use_gradle_build=false
-          architectures/armeabi-v7a=false
-          architectures/arm64-v8a=true
-          architectures/x86=false
-          architectures/x86_64=false
-          package/unique_name="com.sneakiicrown.plopquake.friends"
-          package/name="PLOPQUAKE Friend Test"
-          package/signed=true
-          package/app_category=2
-          version/code=1
-          version/name="Friend Test"
-          EOF
-      - name: Import source and export installable signed Android test APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          GODOT="$RUNNER_TEMP/godotbin/Godot_v4.7.2-stable_linux.x86_64"
-          "$GODOT" --headless --path . --editor --import --quit 2>&1 | tee "$RUNNER_TEMP/import.log"
-          if grep -E 'SCRIPT ERROR|Parse Error|Failed to load script' "$RUNNER_TEMP/import.log"; then
-            echo "Godot import reported script errors; refusing to publish an unverified APK."
-            exit 1
-          fi
-          "$GODOT" --headless --path . --export-debug "Android Friend Test" "$RUNNER_TEMP/PLOPQUAKE-Android-Friend-Test.apk" 2>&1 | tee "$RUNNER_TEMP/export.log"
-          test -s "$RUNNER_TEMP/PLOPQUAKE-Android-Friend-Test.apk"
-          if grep -E 'ERROR: Export|Export failed|Error while exporting' "$RUNNER_TEMP/export.log"; then exit 1; fi
-          unzip -t "$RUNNER_TEMP/PLOPQUAKE-Android-Friend-Test.apk" >/dev/null
-      - name: Save APK as workflow artifact
-        uses: actions/upload-artifact@v4
+      - name: Restore Godot and export template cache
+        uses: actions/cache@v4
         with:
-          name: PLOPQUAKE-Android-Friend-Test.apk
-          path: ${{ runner.temp }}/PLOPQUAKE-Android-Friend-Test.apk
-      - name: Create private-repository test prerelease with APK attached
+          path: |
+            ~/.local/share/godot/export_templates/4.7.2.stable
+            ~/.local/bin/godot-4.7.2
+          key: godot-4.7.2-linux-windows-android-v1
+      - name: Install official engine and required templates
         shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          if [ ! -f "$HOME/.local/bin/godot-4.7.2" ]; then
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/godot.zip" https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+            unzip -jo "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godotbin"
+            cp "$RUNNER_TEMP/godotbin/Godot_v4.7.2-stable_linux.x86_64" "$HOME/.local/bin/godot-4.7.2"
+            chmod +x "$HOME/.local/bin/godot-4.7.2"
+          fi
+          if [ ! -f "$HOME/.local/share/godot/export_templates/4.7.2.stable/windows_release_x86_64.exe" ]; then
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/templates.tpz" https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+            unzip -jo "$RUNNER_TEMP/templates.tpz" templates/android_debug.apk templates/android_release.apk templates/windows_release_x86_64.exe -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          fi
+          python -m pip install Pillow
+      - name: Install Android build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n1)"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36'
+      - name: Build with preserved signing identity and run regressions
+        env:
+          SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          NEXT_CODE: ${{ inputs.version_code }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY" || { echo 'Persistent signing secret missing; refusing identity replacement'; exit 1; }
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$RUNNER_TEMP/android-signing.keystore"
+          chmod 600 "$RUNNER_TEMP/android-signing.keystore"
+          export ANDROID_SIGNING_KEY="$RUNNER_TEMP/android-signing.keystore"
+          python tools/build_public_release.py --engine "$HOME/.local/bin/godot-4.7.2" --code "$NEXT_CODE" --output "$RUNNER_TEMP/output"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checked-windows-android-packages
+          path: |
+            ${{ runner.temp }}/output/*-Windows.zip
+            ${{ runner.temp }}/output/*-Android.apk
+            ${{ runner.temp }}/output/SHA256SUMS.txt
+          retention-days: 14
+      - name: Publish requested prerelease
+        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
         run: |
-          gh release create "plopquake-test-${{ github.run_number }}" "$RUNNER_TEMP/PLOPQUAKE-Android-Friend-Test.apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "PLOPQUAKE Android friend test ${{ github.run_number }}" --notes "Android arm64 sideload test APK built from the source currently in this GitHub repository. No physical-phone testing yet. Has separate test package ID (com.sneakiicrown.plopquake.friends) to avoid overwriting the creator's installed main game or save. Uses an ephemeral debug signing key: future friend-test APKs may require uninstalling the previous friend-test app, losing that test app's saves. Does not automatically include newer unpushed PC project changes. Install only from this trusted release."
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/output/"*-Windows.zip "$RUNNER_TEMP/output/"*-Android.apk "$RUNNER_TEMP/output/SHA256SUMS.txt" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "$RELEASE_TAG" --notes 'Current source built and regression/signature/alignment checks passed. Read README for package IDs, update instructions, credits and remaining physical device/native testing.'

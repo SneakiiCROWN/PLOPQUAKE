@@ -45,4 +45,4 @@ Available for character animation references or sprite components.
 
 The supplied UI Icons pack by jfranci_px has an explicit commercial-use licence, but its 16px pixel-art aesthetics did not fit this build. No files from it are included. Other third-party packs in this conversation are not bundled pending independent confirmation of their commercial redistribution terms and visual suitability.
 
-The pre-existing PLOPQUAKE artwork and code are preserved from the user's provided native project. Perform a separate rights review before publication.
+The pre-existing PLOPQUAKE artwork and code are preserved from the owner's supplied native project, with public prerelease distribution authorized by the owner. The third-party components above retain their own licences; no blanket asset-reuse licence is granted.

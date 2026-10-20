@@ -1,49 +1,45 @@
-# PLOPQUAKE!
+# PLOPQUAKE
 
-Drop blobs, merge matching ones and work your way up to a big BOOM. A colourful portrait-mode game made for Android.
+Drop colourful blobs, merge matching ones, build combos and trigger BOOMs in a portrait-mode puzzle game.
 
-**Current version: Android friend-test APK.** You can install it without Godot, but this exact build still needs real-phone gameplay testing.
+**Current prerelease: 1.0.6 test · Android code 16.**
 
 ## Download and play
 
-1. On your **Android phone**, [download the test APK](https://github.com/SneakiiCROWN/PLOPQUAKE/releases/download/plopquake-test-3/PLOPQUAKE-Android-Friend-Test.apk).
-2. Open the downloaded file from your browser or Downloads app.
-3. Tap **Install**. Android may ask you to allow installs from that particular app; only do this if you trust this download.
-4. Open **PLOPQUAKE!** and play.
+1. [Download the Windows ZIP](https://github.com/SneakiiCROWN/PLOPQUAKE/releases/download/plopquake-v1.0.6-public-test-20261020/PLOPQUAKE-Windows-1.0.6-Test.zip).
+2. Right-click it, choose **Extract All**, then open the extracted folder.
+3. Double-click **PLOPQUAKE.exe** and keep its supporting files together.
 
-No PC, Godot or coding tools are needed for the APK. **Code → Download ZIP** is source code, not the game.
+On Android, [download the installable APK](https://github.com/SneakiiCROWN/PLOPQUAKE/releases/download/plopquake-v1.0.6-public-test-20261020/PLOPQUAKE-Android-1.0.6-Test.apk), open it from Downloads and choose **Install**. Android may ask permission for that browser or file manager to install trusted downloads.
 
-This is installed as a **separate friend-test app**, so it should not replace your main PLOPQUAKE installation or saves. Test APKs use temporary signing keys: future test updates might require uninstalling the earlier test version, which deletes that test version's local saves.
+No coding tools are needed. GitHub’s **Code → Download ZIP** contains source, not the playable program.
 
-## How to play
+## What is in this version?
 
-- Tap or hold in the play area to drop blobs.
-- Merge matching blobs into bigger ones.
-- Build combos and trigger BOOMs.
-- Check out Normal/Daily modes, the collection and settings.
+Normal and Daily modes, collection/progression, rewards, settings, local saves, audio feedback and crowded-pile limits are implemented in the current local source.
 
-## What's working, and what's still being tested?
+## Checked, and still unfinished
 
-- **Built successfully:** the Godot project imported and an installable Android APK was exported.
-- **Implemented in the project:** blob-dropping, merging, BOOMs, progression modes, saves and menus.
-- **Still needs phone testing:** controls, physics, music/sounds, save/restore, performance and how it looks on different screens.
+The gameplay regression harness passed, covering controls and menus, claims, saves, audio state and crowded piles. A new Windows export launched and exited cleanly with no runtime errors. The Android APK signature and package metadata were checked.
 
-An exported APK is **not** proof that every gameplay feature works on every phone. Please tell me if you find a bug.
+No phone or emulator was connected. Phone touch handling, physics, sound, saving and performance remain unverified on hardware. Windows gameplay needs wider human testing.
 
-## What's coming next?
+## Updating without losing progress
 
-More blob and progression variety, power-up ideas, extra rewards and continued visual/audio polish. The longer plan is in [development notes](DEVELOPMENT_SUMMARY.md). Third-party credits are in [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md).
+Extract each Windows version into a new folder and keep the old folder for rollback. Keep your existing settings and save folders; do not reset or delete app data to update.
 
-## Known rough edges and updates
+This APK is the preserved local **com.sneakiicrown.plopquake.godottest**, code **16**, signed with the same certificate as the local 1.0.6 build. It can update an older compatible local installation. The earlier GitHub friend APK used **com.sneakiicrown.plopquake.friends** with a temporary key that is unavailable locally. Both apps can coexist; their saves are separate. **Keep the old friend app installed if it has progress you want to retain.** This release does not migrate that progress or replace its signing identity.
 
-No specific bug has been confirmed *in this exact test APK* yet. Android controls, sound, saving and phone performance still need hands-on checks, so expect some rough edges. New gameplay and presentation features are also still in development.
+## What is next?
 
-**Updating:** grab the next test APK from [Releases](https://github.com/SneakiiCROWN/PLOPQUAKE/releases). These friend-test APKs may not install over each other because each build uses a temporary signing key. You may have to uninstall the *friend-test version* first, which loses that test app's saves. Your usual game installation is separate.
+The current development notes call for further progression, visual/audio polish and device testing. New content ideas remain plans rather than delivered features.
+
+## Requirements and credits
+
+Windows x64 portable build, or Android 7+ arm64 APK. No editor or source build is needed. Third-party art and audio credits and licences are in THIRD_PARTY_CREDITS.md; Godot notices accompany the Windows package.
+
+Original project material is source-available with the permissions in LICENSE.txt; public availability is not a blanket open-source or asset-reuse licence. Third-party licence rights remain intact.
 
 ## Found a bug?
 
-[Report it here](https://github.com/SneakiiCROWN/PLOPQUAKE/issues). Include your phone model, Android version and what happened.
-
-## For developers only
-
-Install **Godot 4.7.x**, download the repository source, import the folder containing `project.godot` and press **Run**. Android exports need the appropriate Godot export templates and Android SDK. More detail: [README-READ-FIRST.md](README-READ-FIRST.md).
+[Open an issue](https://github.com/SneakiiCROWN/PLOPQUAKE/issues) with the release version, Windows/Android version, relevant controller or phone model, steps to reproduce and what happened. Share screenshots or a short recording if useful; leave personal saves, account details and private logs out of public reports.
